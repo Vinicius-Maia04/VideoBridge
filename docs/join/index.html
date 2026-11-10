@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>VideoBridge — Assistir</title>
+<style>body{font:16px system-ui,sans-serif;background:#14161a;color:#e6e8ec;display:grid;place-items:center;min-height:100vh;margin:0}
+main{max-width:480px;padding:24px;text-align:center}a.btn,button{display:inline-block;background:#5b8cff;color:#fff;border:0;border-radius:8px;padding:12px 20px;font-size:16px;text-decoration:none;cursor:pointer}
+code{display:block;word-break:break-all;background:#1c1f26;padding:10px;border-radius:6px;margin:14px 0;user-select:all}.mut{color:#8b93a1;font-size:14px}</style></head>
+<body><main>
+<h1>🎥 VideoBridge</h1>
+<p id="msg">Abrindo o VideoBridge…</p>
+<code id="code" hidden></code>
+<p><a id="open" class="btn" href="#" hidden>Abrir no VideoBridge</a></p>
+<p class="mut">Se nada abriu, instale o VideoBridge e clique no botão acima, ou abra o app → Assistir → cole o código.<br>
+Esta página não envia nada para servidor algum: o código fica só no seu navegador (parte depois do #).</p>
+</main>
+<script>
+(function () {
+  var code = decodeURIComponent(location.hash.slice(1));
+  var ok = /^VB3\.[A-Za-z0-9_-]{22}(\.[A-Za-z0-9_-]+)?$/.test(code);
+  var msg = document.getElementById('msg');
+  if (!ok) { msg.textContent = 'Link de convite inválido ou incompleto.'; return; }
+  var url = 'videobridge://join/' + code;
+  var c = document.getElementById('code'); c.textContent = code; c.hidden = false;
+  var a = document.getElementById('open'); a.href = url; a.hidden = false;
+  msg.textContent = 'Clique em "Abrir no VideoBridge" se o navegador pedir permissão.';
+  location.href = url;
+})();
+</script></body></html>

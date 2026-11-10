@@ -1,0 +1,41 @@
+# Publica um release com o videobridge.exe quando você cria uma tag de versão (ex.: v0.3.0).
+name: release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+jobs:
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: A tag precisa ser igual à versão do Cargo.toml
+        run: |
+          V=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+          if [ "v$V" != "$GITHUB_REF_NAME" ]; then echo "Tag $GITHUB_REF_NAME != versão v$V do Cargo.toml"; exit 1; fi
+      - name: Testes (Rust e interface)
+        run: |
+          cargo test -p vb-core -p vb-audio
+          node --test ui-tests/*.test.js
+      - name: Compilar
+        run: cargo build --release -p vb-app
+        env:
+          VB_REPO: ${{ github.repository }}   # liga a verificação de atualização no app
+      - name: Empacotar
+        run: |
+          mkdir dist
+          cp target/release/videobridge.exe dist/VideoBridge.exe
+          (cd dist && sha256sum VideoBridge.exe > VideoBridge.exe.sha256)
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true

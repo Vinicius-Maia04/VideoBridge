@@ -1,0 +1,33 @@
+[package]
+name = "vb-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "VideoBridge: salas de vídeo P2P para grupos de amigos (shell em Rust + WebView2)"
+
+[[bin]]
+name = "videobridge"
+path = "src/main.rs"
+
+[features]
+default = []
+# Aceita automaticamente microfone/câmera/captura de tela da nossa própria página (sem o aviso do WebView2).
+# Depende de `webview2-com` na MESMA versão que o `wry` usa; se a compilação reclamar, desligue.
+auto-permissions = []
+
+[target.'cfg(windows)'.dependencies]
+vb-core = { path = "../vb-core" }
+vb-audio = { path = "../vb-audio" }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util"] }
+tao = "0.31"
+wry = "0.47"
+tray-icon = "0.19"
+global-hotkey = "0.6"
+include_dir = "0.7"
+image = { version = "0.25", default-features = false, features = ["png"] }
+base64 = "0.22"
+winreg = "0.52"
+arboard = { version = "3", default-features = false }
+webview2-com = "0.33"
+windows = { version = "=0.58.0", features = ["Win32_Foundation"] }

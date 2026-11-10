@@ -1,0 +1,29 @@
+# Compilação (o `cargo` regera; é a pasta mais pesada)
+target/
+
+# NÃO ignore o Cargo.lock: é um aplicativo, e o workflow precisa das mesmas versões que funcionaram no seu PC.
+
+# Segredos e dados locais: o config.json guarda o webhook do Discord (quem tem a URL posta no seu canal)
+config.json
+config.json.tmp
+discord_pending.json
+.env
+*.env
+webview/
+logs/
+*.log
+
+# Pacotes e cópias de trabalho
+*.zip
+*.exe
+*.bak
+dist/
+node_modules/
+
+# Editor e sistema
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+desktop.ini
+.DS_Store

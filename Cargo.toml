@@ -1,0 +1,15 @@
+[workspace]
+resolver = "2"
+members = ["crates/vb-core", "crates/vb-audio", "crates/vb-app"]
+
+[workspace.package]
+version = "0.2.0"
+edition = "2021"
+license = "MIT"
+
+[profile.release]
+opt-level = "s"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true

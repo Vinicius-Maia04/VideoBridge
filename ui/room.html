@@ -1,0 +1,111 @@
+<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self'; script-src 'self'; connect-src 'none'">
+<title>VideoBridge</title><link rel="stylesheet" href="app.css"></head><body>
+
+<div id="lobby"><div class="card">
+  <h1>🎥 VideoBridge</h1>
+  <div class="mut">Compartilhe tela e câmera com seus amigos, direto entre os computadores. Sem anúncios, sem plano pago.</div>
+  <label>Seu nome <input id="lobbyName" type="text" maxlength="40" class="grow" placeholder="Como os outros vão ver você"></label>
+  <button id="btnCreate" class="btn">Criar sala</button>
+  <div class="divider">ou entrar numa sala</div>
+  <div class="row"><input id="codeIn" type="text" class="grow" placeholder="Cole o código (VB3…) ou o link"><button id="btnJoin" class="btn ghost">Entrar</button></div>
+  <div id="lobbyMsg" class="warn"></div>
+  <div class="row"><button id="btnLobbySettings" class="btn ghost">⚙ Configurações</button><span class="mut" id="ver"></span></div>
+</div></div>
+
+<div id="roomView" class="hidden">
+  <header class="topbar">
+    <div class="left"><b>VideoBridge</b><span class="chip" id="roomChip" title="Código da sala"></span><span class="dot" id="relayDot" title="Relay de signaling"></span></div>
+    <div class="controls">
+      <button id="btnMic" class="cbtn off" title="Microfone">🎙</button>
+      <button id="btnDeaf" class="cbtn" title="Ouvir os outros">🎧</button>
+      <button id="btnGear" class="cbtn" title="Qualidade da transmissão">⚙</button>
+      <button id="btnScreen" class="cbtn" title="Compartilhar tela">🖥<span id="screenCount" class="badge"></span></button>
+      <button id="btnSys" class="cbtn" title="Compartilhe uma tela para transmitir o áudio do sistema" disabled>🔊</button>
+      <button id="btnMixer" class="cbtn" title="Áudio por aplicativo: escolha o que é transmitido">🎚</button>
+      <button id="btnCam" class="cbtn" title="Compartilhar câmera">📷</button>
+      <button id="btnLeave" class="cbtn stop" title="Sair da sala">📞</button>
+    </div>
+    <div class="right"><button id="btnShareRoom" class="btn ghost">🔗 Compartilhar sala</button><button id="btnSettings" class="btn ghost" title="Configurações e diagnóstico">⋮</button></div>
+  </header>
+
+  <div id="quality" class="pop hidden">
+    <div class="mut">O que você está compartilhando</div>
+    <div class="presets">
+      <button class="preset" id="presetText"><b>Texto / código</b><span>prioriza nitidez</span></button>
+      <button class="preset sel" id="presetBalanced"><b>Equilibrado</b><span>nitidez e fluidez</span></button>
+      <button class="preset" id="presetVideo"><b>Vídeo / jogo</b><span>prioriza fluidez</span></button>
+    </div>
+    <label class="col">Resolução<select id="res"><option value="360">360p</option><option value="480">480p</option><option value="720">HD (720p)</option><option value="1080" selected>Full HD (1080p)</option><option value="1440">2K (1440p)</option></select></label>
+    <label class="col">Taxa de quadros<select id="fps"><option value="15">15 fps</option><option value="30" selected>30 fps</option><option value="60">60 fps</option></select></label>
+    <label class="col">Bitrate<select id="bitrate"><option value="auto">Automático</option><option value="2000">Padrão (~2 Mbps)</option><option value="4000">Alto (~4 Mbps)</option><option value="6000">~6 Mbps</option><option value="8000">~8 Mbps</option><option value="10000">~10 Mbps</option><option value="custom">Personalizado…</option></select></label>
+    <input id="bitrateCustom" type="number" min="300" max="20000" step="100" placeholder="kbps" class="hidden">
+    <label class="col">Codec<select id="codec"><option>H264</option><option>VP9</option><option>VP8</option><option>AV1</option></select></label>
+    <div id="uplink" class="mut"></div>
+  </div>
+
+  <div id="mixer" class="pop wide hidden">
+    <b>Áudio por aplicativo</b>
+    <div class="mut">Escolha de quais aplicativos o som é transmitido. O próprio VideoBridge nunca é transmitido (evita eco).</div>
+    <div id="mixerList" class="mixlist"></div>
+    <label><input type="checkbox" id="mixNew" checked> Novos aplicativos entram transmitindo</label>
+    <div id="mixerStatus" class="mut"></div>
+  </div>
+
+  <div class="layout">
+    <aside class="side"><h3><span>Participantes</span><span id="peopleCount" class="mut"></span></h3><div id="participants"></div></aside>
+    <main class="stage">
+      <div id="emptyStage"><div>Ninguém está transmitindo ainda.</div>
+        <div class="row"><button id="btnScreen2" class="btn">🖥 Compartilhar tela</button><button id="btnCam2" class="btn">📷 Compartilhar câmera</button></div></div>
+      <div id="tiles" class="tiles"></div>
+    </main>
+  </div>
+  <div id="msg" class="warn"></div>
+  <div id="statusbar" class="statusbar"></div>
+</div>
+
+<div id="picker" class="modal hidden"><div class="box">
+  <h2>Escolha o que compartilhar</h2><div class="mut">Selecione uma ou mais telas/janelas. Nada é capturado sem a sua escolha.</div>
+  <div id="pickerList" class="sources"></div>
+  <div class="mut">O áudio do sistema é transmitido <b>junto com a tela</b> e para assim que você parar de compartilhá-la.</div>
+  <div class="row"><label><input type="checkbox" id="pickerAudio" checked> Compartilhar áudio do sistema junto com a tela</label><span class="grow"></span>
+    <button id="pickerCancel" class="btn ghost">Cancelar</button><button id="pickerGo" class="btn">Compartilhar</button></div>
+</div></div>
+
+<div id="settings" class="modal hidden"><div class="box">
+  <h2>Configurações</h2>
+  <div class="fields">
+    <fieldset><legend>Geral</legend>
+      <label>Seu nome <input id="myName" type="text" maxlength="40" class="grow"></label>
+      <label>Máx. participantes <input id="maxParticipants" type="number" min="2" max="12" class="w90"></label>
+      <label><input type="checkbox" id="sfxOn"> Efeitos sonoros</label>
+      <label>Volume dos efeitos <input type="range" id="sfxVol" min="0" max="1" step="0.05" value="0.5"><button id="btnSfxTest" class="btn ghost">Testar</button></label>
+      <label><input type="checkbox" id="autostart"> Iniciar com o Windows</label>
+      <label><input type="checkbox" id="minimized"> Iniciar minimizado (só no início automático)</label></fieldset>
+    <fieldset><legend>Dispositivos</legend>
+      <label>Câmera <select id="camDev" class="grow"></select></label>
+      <label>Microfone <select id="micDev" class="grow"></select></label>
+      <label>Ganho do mic <input type="range" id="micGain" min="0" max="2" step="0.05" value="1"></label>
+      <label><input type="checkbox" id="sysAudio" checked> Compartilhar áudio do sistema junto com a tela</label>
+      <label><input type="checkbox" id="appAudioOn" checked> Áudio por aplicativo (Windows 10 2004+)</label>
+      <label>Áudio do sistema (alternativa) <select id="sysDev" class="grow"></select></label>
+      <div class="mut">Só use se o botão 🔊 falhar: escolha um dispositivo de gravação que capture o som do PC (ex.: "Mixagem estéreo" ou um cabo virtual). Em "Automático" o app tenta o loopback do Windows e, se falhar, procura a Mixagem estéreo.</div></fieldset>
+    <fieldset><legend>Discord (opcional)</legend>
+      <label><input type="checkbox" id="dcOn"> Avisar no Discord ao compartilhar</label>
+      <input id="dcUrl" type="password" placeholder="URL do webhook do canal">
+      <input id="joinPage" type="text" placeholder="URL da página-ponte https (convite clicável)">
+      <div class="mut">Canal → Editar → Integrações → Webhooks. Página-ponte: docs/join/ (veja o README).</div></fieldset>
+    <fieldset><legend>Rede</legend>
+      <label>Relay de signaling <input id="relayUrl" type="text" class="grow"></label>
+      <div class="mut">Só usado para as pessoas se encontrarem (tudo cifrado). O vídeo vai direto entre os PCs.</div>
+      <label class="col">Servidor TURN (opcional): para quando o P2P direto falha<textarea id="turnLines" rows="3" placeholder="turn:servidor:3478|usuário|senha"></textarea></label>
+      <label><input type="checkbox" id="turnShare" checked> Compartilhar com a sala (amigos também usam)</label>
+      <div class="mut">Um lado com relay já basta para destravar a conexão. Uma linha por servidor: url|usuário|senha. A mídia continua cifrada de ponta a ponta.</div></fieldset>
+  </div>
+  <div class="row"><button id="btnDiag" class="btn ghost">Executar diagnóstico</button><span class="grow"></span><button id="btnSave" class="btn">Salvar</button><button id="btnCloseSettings" class="btn ghost">Fechar</button></div>
+  <div id="settingsMsg" class="mut"></div>
+  <pre id="diag" class="mut"></pre>
+</div></div>
+
+<script src="shared/state.js"></script><script src="shared/quality.js"></script><script src="shared/codecs.js"></script><script src="shared/ice.js"></script><script src="shared/turn.js"></script><script src="shared/sfx.js"></script><script src="shared/zoom.js"></script>
+<script src="common.js"></script><script src="room.js"></script></body></html>
