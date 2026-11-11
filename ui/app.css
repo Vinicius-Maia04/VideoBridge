@@ -114,3 +114,6 @@ select{text-overflow:ellipsis}
 .srcgroup{display:grid;gap:8px}
 .srcgroup h3{margin:8px 0 0;font-size:13px;color:var(--txt);padding-bottom:6px;border-bottom:1px solid var(--line)}
 .src .kind{font-size:11px}
+
+.modal.top{z-index:40}
+.modal .box.narrow{width:min(460px,100%)}

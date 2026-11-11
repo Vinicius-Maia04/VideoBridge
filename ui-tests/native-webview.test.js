@@ -48,3 +48,69 @@ test('iceComplete: só candidatos locais esperam o timeout; "complete" termina n
   const pc2 = fakePc(); pc2.iceGatheringState = 'complete';
   await w.iceComplete(pc2, 5000);
 });
+
+// ---- cartões: clicar fora fecha; configurações pedem confirmação se houver alterações ----
+async function press(t, id, type) { const el = t.$(id); el.fire(type, { target: el }); await t.tick(4); }
+
+test('clicar no fundo escuro fecha o seletor de fontes', async () => {
+  const t = boot(); await t.enter();
+  t.$('#picker').classList.remove('hidden');
+  await press(t, '#picker', 'pointerdown'); await press(t, '#picker', 'click');
+  assert.ok(t.$('#picker').classList.contains('hidden'));
+});
+test('arrastar de dentro do cartão para o fundo NÃO fecha (clique que não começou no fundo)', async () => {
+  const t = boot(); await t.enter();
+  t.$('#picker').classList.remove('hidden');
+  await press(t, '#picker', 'click'); // sem pointerdown no fundo
+  assert.ok(!t.$('#picker').classList.contains('hidden'));
+});
+test('configurações: sem alterações, clicar fora fecha direto', async () => {
+  const t = boot(); await t.enter();
+  t.$('#btnSettings').click(); await t.tick(8);
+  assert.ok(!t.$('#settings').classList.contains('hidden'));
+  await press(t, '#settings', 'pointerdown'); await press(t, '#settings', 'click');
+  assert.ok(t.$('#settings').classList.contains('hidden'));
+  assert.ok(t.$('#confirmDlg').classList.contains('hidden'), 'não perguntou nada');
+});
+test('configurações: com alterações, clicar fora pergunta; "Continuar" mantém, "Descartar" fecha, "Salvar" grava e fecha', async () => {
+  const t = boot(); await t.enter();
+  const open = async () => { t.$('#btnSettings').click(); await t.tick(8); };
+  const outside = async () => { await press(t, '#settings', 'pointerdown'); await press(t, '#settings', 'click'); };
+  const saves = () => t.calls.filter((c) => c[0] === 'setConfig').length, before = saves();
+  await open(); t.$('#myName').value = 'Outro Nome'; await outside();
+  assert.ok(!t.$('#confirmDlg').classList.contains('hidden'), 'perguntou');
+  t.$('#cfmKeep').click(); await t.tick(4);
+  assert.ok(!t.$('#settings').classList.contains('hidden') && t.$('#confirmDlg').classList.contains('hidden'));
+  await outside(); t.$('#cfmDiscard').click(); await t.tick(6);
+  assert.ok(t.$('#settings').classList.contains('hidden'));
+  assert.equal(saves(), before, 'descartar não grava');
+  await open(); t.$('#myName').value = 'Outro Nome'; await outside(); t.$('#cfmSave').click(); await t.tick(10);
+  assert.ok(t.calls.some((c) => c[0] === 'setConfig' && c[1].hostName === 'Outro Nome'), 'salvar grava');
+  assert.ok(t.$('#settings').classList.contains('hidden'));
+});
+
+// ---- Rich Presence do Discord (convite pelo perfil) ----
+const CODE = 'VB3.AAAAAAAAAAAAAAAAAAAAAA';
+test('Rich Presence: a sala vai ao perfil, atualiza quando alguém entra e limpa ao sair', async () => {
+  const t = boot({ vbOverrides: { sigOpen: async () => ({ code: CODE, joinUrl: '' }), richUpdate: async () => true, richClear: async () => {} } }); await t.enter(); await t.tick(8);
+  const ups = () => t.calls.filter((c) => c[0] === 'richUpdate').map((c) => c[1]);
+  assert.equal(ups()[0].code, CODE); assert.equal(ups()[0].people, 1);
+  t.msg({ t: 'hello', r: 'aaaaaaaaaa', name: 'Ana' }); await t.tick(8);
+  assert.equal(ups().pop().people, 2);
+  const n = ups().length; t.msg({ t: 'hello', r: 'aaaaaaaaaa', name: 'Ana' }); await t.tick(6);
+  assert.equal(ups().length, n, 'sem mudança não reenvia');
+  t.$('#btnLeave').click(); await t.tick(12);
+  assert.ok(t.calls.some((c) => c[0] === 'richClear'), 'sair limpa o perfil');
+});
+test('Rich Presence desligado nas configurações: nada é enviado ao Discord', async () => {
+  const cfg = boot().config; cfg.discord = { announce: false, webhookUrl: '', joinPageUrl: '', presence: false };
+  const t = boot({ cfg, vbOverrides: { sigOpen: async () => ({ code: CODE, joinUrl: '' }) } }); await t.enter(); await t.tick(8);
+  t.msg({ t: 'hello', r: 'aaaaaaaaaa', name: 'Ana' }); await t.tick(8);
+  assert.ok(!t.calls.some((c) => c[0] === 'richUpdate'));
+});
+test('a opção do Rich Presence faz parte da configuração salva (não se perde ao salvar)', async () => {
+  const t = boot(); await t.enter();
+  t.$('#btnSettings').click(); await t.tick(8);
+  t.$('#dcPresence').checked = false; t.$('#btnSave').click(); await t.tick(10);
+  assert.equal(t.calls.filter((c) => c[0] === 'setConfig').pop()[1].discord.presence, false);
+});

@@ -101,6 +101,12 @@ pub fn parse_code(text: &str) -> Result<ParsedCode, RoomError> {
     Ok(ParsedCode { secret, relay })
 }
 
+/// Identificador do "grupo" no Rich Presence do Discord. É um hash do segredo (não revela o convite).
+pub fn party_id(secret: &str) -> String {
+    let h = Sha256::digest(format!("party:{secret}").as_bytes());
+    h.iter().take(12).map(|b| format!("{b:02x}")).collect()
+}
+
 /// Tópico e chave derivados do segredo.
 #[derive(Clone)]
 pub struct RoomKeys {
@@ -248,6 +254,16 @@ mod tests {
         let mut other = RoomKeys::new(&s);
         other.topic = "vboutrotopico".into(); // mesma chave, tópico diferente
         assert!(other.open(&a.seal(&json!({"t":"x"}))).is_err());
+    }
+
+    #[test]
+    fn party_id_is_stable_short_and_hides_the_secret() {
+        let s = new_secret();
+        assert_eq!(party_id(&s), party_id(&s));
+        assert_ne!(party_id(&s), party_id(&new_secret()));
+        assert_eq!(party_id(&s).len(), 24);
+        assert!(!party_id(&s).contains(&s));
+        assert_ne!(party_id(&s), RoomKeys::new(&s).topic, "não repete o tópico do relay");
     }
 
     #[test]

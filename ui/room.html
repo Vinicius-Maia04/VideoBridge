@@ -72,6 +72,12 @@
     <button id="pickerCancel" class="btn ghost">Cancelar</button><button id="pickerGo" class="btn">Compartilhar</button></div>
 </div></div>
 
+<div id="confirmDlg" class="modal top hidden"><div class="box narrow">
+  <h2>Alterações não salvas</h2>
+  <div class="mut">Você mudou configurações e ainda não salvou. Deseja salvar antes de fechar?</div>
+  <div class="row"><button id="cfmKeep" class="btn ghost">Continuar editando</button><span class="grow"></span><button id="cfmDiscard" class="btn ghost">Descartar</button><button id="cfmSave" class="btn">Salvar</button></div>
+</div></div>
+
 <div id="settings" class="modal hidden"><div class="box">
   <h2>Configurações</h2>
   <div class="fields">
@@ -90,7 +96,10 @@
       <label><input type="checkbox" id="appAudioOn" checked> Áudio por aplicativo (Windows 10 2004+)</label>
       <label>Áudio do sistema (alternativa) <select id="sysDev" class="grow"></select></label>
       <div class="mut">Só use se o botão 🔊 falhar: escolha um dispositivo de gravação que capture o som do PC (ex.: "Mixagem estéreo" ou um cabo virtual). Em "Automático" o app tenta o loopback do Windows e, se falhar, procura a Mixagem estéreo.</div></fieldset>
-    <fieldset><legend>Discord (opcional)</legend>
+    <fieldset><legend>Discord</legend>
+      <label><input type="checkbox" id="dcPresence"> Mostrar a sala no meu perfil do Discord (convite por "Entrar")</label>
+      <div class="mut">Precisa do Discord aberto neste PC. Quem pode entrar direto é definido no Discord: Configurações → Privacidade de atividade → "Permitir que participantes do canal de voz entrem no meu jogo" (ligado) e "Permitir que amigos entrem no meu jogo" (desligado). Quem não puder entrar direto tem o pedido recusado.</div>
+      <div class="mut">Aviso em canal por webhook (opcional):</div>
       <label><input type="checkbox" id="dcOn"> Avisar no Discord ao compartilhar</label>
       <input id="dcUrl" type="password" placeholder="URL do webhook do canal">
       <input id="joinPage" type="text" placeholder="URL da página-ponte https (convite clicável)">

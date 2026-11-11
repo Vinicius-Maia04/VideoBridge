@@ -15,6 +15,8 @@ mod bridge;
 #[cfg(windows)]
 mod platform;
 #[cfg(windows)]
+mod rich;
+#[cfg(windows)]
 mod single;
 
 #[cfg(windows)]

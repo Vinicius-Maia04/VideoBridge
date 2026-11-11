@@ -23,6 +23,22 @@ pub fn register_protocol() {
     }
 }
 
+/// `discord-<ID>://`: é por ele que o Discord abre o app quando alguém entra pelo perfil (o segredo chega depois, pelo soquete).
+pub fn register_discord_protocol(app_id: &str) {
+    let Some(exe) = exe() else { return };
+    let cmd = format!("\"{exe}\" \"%1\"");
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let Ok((key, _)) = hkcu.create_subkey(format!(r"Software\Classes\discord-{app_id}")) else { return };
+    let _ = key.set_value("", &"URL:VideoBridge (Discord)");
+    let _ = key.set_value("URL Protocol", &"");
+    if let Ok((c, _)) = key.create_subkey(r"shell\open\command") {
+        let cur: Result<String, _> = c.get_value("");
+        if cur.map(|v| v != cmd).unwrap_or(true) {
+            let _ = c.set_value("", &cmd);
+        }
+    }
+}
+
 pub fn set_autostart(on: bool) {
     let Some(exe) = exe() else { return };
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);

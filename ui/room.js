@@ -58,7 +58,7 @@ function uiToCfg() {
   c.systemAudio = $('#sysAudio').checked; c.systemAudioDevice = $('#sysDev').value;
   c.mic = { enabled: false, deviceId: $('#micDev').value, gain: Number($('#micGain').value) };
   c.webcam = { enabled: false, deviceId: $('#camDev').value };
-  c.discord = { announce: $('#dcOn').checked, webhookUrl: $('#dcUrl').value.trim(), joinPageUrl: $('#joinPage').value.trim() };
+  c.discord = { announce: $('#dcOn').checked, webhookUrl: $('#dcUrl').value.trim(), joinPageUrl: $('#joinPage').value.trim(), presence: $('#dcPresence').checked };
   c.signaling = { relay: $('#relayUrl').value.trim(), maxParticipants: Number($('#maxParticipants').value) || 6 };
   c.autostart = $('#autostart').checked; c.startMinimized = $('#minimized').checked;
   c.sfx = { enabled: $('#sfxOn').checked, volume: Number($('#sfxVol').value) };
@@ -75,7 +75,7 @@ function cfgToUi(c) {
   $('#codec').value = c.codec; $('#sysAudio').checked = c.systemAudio;
   S.preset = c.priority === 'detail' ? 'text' : c.priority === 'motion' ? 'video' : 'balanced'; markPreset();
   $('#micGain').value = c.mic.gain;
-  $('#dcOn').checked = c.discord.announce; $('#dcUrl').value = c.discord.webhookUrl; $('#joinPage').value = c.discord.joinPageUrl || '';
+  $('#dcPresence').checked = c.discord.presence !== false; $('#dcOn').checked = c.discord.announce; $('#dcUrl').value = c.discord.webhookUrl; $('#joinPage').value = c.discord.joinPageUrl || '';
   $('#relayUrl').value = (c.signaling && c.signaling.relay) || ''; $('#maxParticipants').value = (c.signaling && c.signaling.maxParticipants) || 6;
   $('#autostart').checked = c.autostart; $('#minimized').checked = c.startMinimized;
   $('#sfxOn').checked = !c.sfx || c.sfx.enabled !== false; $('#sfxVol').value = c.sfx ? c.sfx.volume : 0.5;
@@ -429,10 +429,25 @@ function removeLocal(item) {
 const localMeta = () => S.local.map((i) => ({ sid: i.sid, label: i.label, kind: i.kind, audio: i.audio }));
 
 // ---------- Discord (UM aviso por sala, do dono; mostra quem está compartilhando) ----------
+/** O que eu estou compartilhando, em texto ("🖥 Jogo + 🔊"). */
+function mySources() {
+  const mine = S.local.filter((i) => i.kind === 'screen' || i.kind === 'camera'), hasSys = S.local.some((i) => i.kind === 'sysaudio');
+  return mine.map((i, n) => `${icon(i.kind)}${i.label}${n === 0 && hasSys ? ' + 🔊' : ''}`);
+}
+/** Batimento: a cada 60 s (ou quando minhas fontes mudam) aviso o relay que continuo aqui. Quem vigia o aviso do Discord
+ *  (o app do dono, depois que ele sai) usa isso para saber quem ainda está na sala e o que cada um compartilha. */
+function startHeartbeat() {
+  clearInterval(S.hbTimer); S.hbSig = ''; S.hbAt = Date.now();
+  S.hbTimer = setInterval(() => {
+    if (machine.state !== 'IN_ROOM') return;
+    const src = mySources(), sig = JSON.stringify(src), now = Date.now();
+    if (sig === S.hbSig && now - S.hbAt < 60000) return;
+    S.hbSig = sig; S.hbAt = now; sigSend({ t: 'hb', name: S.name, src });
+  }, 20000);
+}
 /** O aviso lista as fontes de TODOS na sala (as minhas e as que os outros anunciaram em `meta`). */
 function discordMessage() {
-  const mine = S.local.filter((i) => i.kind === 'screen' || i.kind === 'camera'), hasSys = S.local.some((i) => i.kind === 'sysaudio');
-  const sources = mine.map((i, n) => `${S.name}: ${icon(i.kind)}${i.label}${n === 0 && hasSys ? ' + 🔊' : ''}`);
+  const sources = mySources().map((s) => `${S.name}: ${s}`);
   [...S.peers.values()].sort((a, b) => a.name.localeCompare(b.name)).forEach((p) => {
     const sys = p.meta.some((x) => x.kind === 'sysaudio');
     p.meta.filter((x) => x.kind === 'screen' || x.kind === 'camera').forEach((x, n) => sources.push(`${p.name}: ${icon(x.kind)}${x.label}${n === 0 && sys ? ' + 🔊' : ''}`));
@@ -448,6 +463,14 @@ function syncDiscord() {
     if (!S.discordOn) { S.discordOn = !!(await vb.discordAnnounce(m)); if (S.discordOn) { S.discordLast = sig; say('Convite publicado no Discord.', 'mut'); } }
     else { await vb.discordUpdate(m); S.discordLast = sig; }
   }).catch((e) => say('Discord: ' + e.message, 'err'));
+}
+/** Rich Presence: o perfil do Discord oferece "Entrar" na sala (só muda quando pessoas/fontes mudam). */
+function syncRich() {
+  if (!S.room || !S.cfg.discord || S.cfg.discord.presence === false) return;
+  const m = discordMessage(), sig = JSON.stringify([m.invite, m.people, m.sources]);
+  if (sig === S.richLast) return;
+  S.richLast = sig;
+  vb.richUpdate({ code: m.invite, people: m.people, max: S.cfg.signaling.maxParticipants, sources: m.sources }).catch(() => {});
 }
 /** O dono vai sair mas a sala continua: quem tiver o MESMO webhook assume a mensagem (o 1º da fila, por ID). */
 async function onDiscordHandoff(m) {
@@ -794,6 +817,7 @@ async function collectStats(p) {
   adapt(p, loss);
 }
 function startStatsLoop() {
+  startHeartbeat();
   clearInterval(S.statsTimer);
   S.statsTimer = setInterval(async () => {
     for (const p of S.peers.values()) { if (p.pc.connectionState === 'connected') { try { await collectStats(p); } catch { /* fechando */ } } }
@@ -810,14 +834,14 @@ async function joinRoom(codeText) {
   machine.to('JOINING'); lobbySay('Conectando…', 'mut');
   try {
     S.cfg = await vb.setConfig({ ...uiToCfg(), hostName: name });
-    S.myId = randId(); S.helloSent = false; S.sigState = ''; S.created = !codeText; S.dcOwner = !codeText; S.discordLast = ''; S.dcAdopted = false; S.lastAlone = null;
+    S.myId = randId(); S.helloSent = false; S.sigState = ''; S.created = !codeText; S.dcOwner = !codeText; S.discordLast = ''; S.richLast = ''; S.dcAdopted = false; S.lastAlone = null;
     S.room = await vb.sigOpen(codeText || null, S.myId);
     machine.to('IN_ROOM'); lobbySay('', 'mut');
     if (S.sigState === 'closed') { await leaveRoom(CLOSED_MSG, { silent: true }); return; } // o código é de uma sala já encerrada
     sound('enter');
     startStatsLoop(); renderUplink();
     if (S.sigState === 'live') sendHello();
-    if (!codeText) { await vb.copy(S.room.joinUrl || S.room.code); say('Sala criada. O ' + (S.room.joinUrl ? 'link' : 'código') + ' foi copiado — envie aos seus amigos.', 'mut'); syncDiscord(); }
+    if (!codeText) { await vb.copy(S.room.joinUrl || S.room.code); say('Sala criada. O ' + (S.room.joinUrl ? 'link' : 'código') + ' foi copiado — envie aos seus amigos.', 'mut'); syncDiscord(); syncRich(); }
     else say('Entrando na sala…', 'mut');
     setTimeout(() => { if (machine.state === 'IN_ROOM' && !S.helloSent) say('Relay de signaling indisponível: ninguém conseguirá se conectar. Verifique a internet ou troque o relay em ⋮ Configurações.', 'err'); }, 12000);
     vb.log('info', 'Joined room', { created: !codeText });
@@ -829,7 +853,7 @@ async function joinRoom(codeText) {
 /** silent: não anuncia saída (nunca chegou a entrar de fato) nem toca o som de saída. */
 async function leaveRoom(reason, opts = {}) {
   if (machine.state !== 'IN_ROOM') return;
-  machine.to('LEAVING'); clearInterval(S.statsTimer); clearTimeout(S.joinTimer); S.joinTimer = null;
+  machine.to('LEAVING'); clearInterval(S.statsTimer); clearInterval(S.hbTimer); clearTimeout(S.joinTimer); S.joinTimer = null;
   if (!opts.silent && S.dcOwner && S.discordOn && S.peers.size > 0) {
     // Sou o dono do convite e a sala continua: tento passar a mensagem a quem tiver o mesmo webhook (até 2,5 s).
     S.dcAdopted = false;
@@ -850,7 +874,7 @@ async function leaveRoom(reason, opts = {}) {
   S.peers.forEach((p) => { try { p.pc.close(); } catch { /* ok */ } }); S.peers.clear();
   [...S.local].forEach(stopItem); S.local = []; S.micItem = null; S.micGainNode = null; S.micMuted = false;
   [...S.tiles.keys()].forEach(removeTile);
-  await vb.discordEnd().catch(() => {}); S.discordOn = false; S.dcOwner = false; S.discordLast = '';
+  await vb.discordEnd().catch(() => {}); S.discordOn = false; S.dcOwner = false; S.discordLast = ''; S.richLast = ''; vb.richClear().catch(() => {});
   S.room = null; S.helloSent = false; S.focusKey = null; S.lastAlone = null; S.gone.clear(); S.sharedTurn = []; syncShareState(); say('', 'mut');
   machine.to('LOBBY'); if (reason) lobbySay(reason, 'warn');
   vb.log('info', 'Left room; engine released');
@@ -900,8 +924,45 @@ async function confirmPicker() {
 }
 
 // ---------- configurações e diagnóstico ----------
+let settingsSnap = '';
+const settingsOpen = () => !$('#settings').classList.contains('hidden');
+/** "Foto" do formulário: se mudou desde que abriu, há alterações não salvas. */
+const snapSettings = () => { try { return JSON.stringify(uiToCfg()) + '|' + $('#turnLines').value; } catch { return ''; } };
 async function openSettings() {
-  cfgToUi(S.cfg); await refreshDevices().catch(() => {}); $('#settingsMsg').textContent = ''; $('#settings').classList.remove('hidden');
+  cfgToUi(S.cfg); await refreshDevices().catch(() => {}); $('#settingsMsg').textContent = '';
+  settingsSnap = snapSettings(); $('#settings').classList.remove('hidden');
+}
+/** Pergunta (na própria página) o que fazer com as alterações: 'save' | 'discard' | 'keep'. */
+function askUnsaved() {
+  return new Promise((resolve) => {
+    const dlg = $('#confirmDlg');
+    const done = (v) => { dlg.classList.add('hidden'); S.confirmResolve = null; resolve(v); };
+    S.confirmResolve = done;
+    dlg.classList.remove('hidden');
+  });
+}
+async function saveSettings() {
+  try {
+    const tv = V.parseTurnLines($('#turnLines').value); await saveCfg(); S.name = S.cfg.hostName || S.name; $('#lobbyName').value = S.cfg.hostName;
+    $('#settingsMsg').textContent = tv.errors.length ? 'Salvo, mas ignorei linhas do TURN: ' + tv.errors.join(' ') : 'Configurações salvas.';
+    if (machine.state === 'IN_ROOM' && S.helloSent) sendHello(); renderUplink(); settingsSnap = snapSettings(); return true;
+  } catch (e) { $('#settingsMsg').textContent = 'Falha ao salvar: ' + e.message; return false; }
+}
+/** Fechar (botão, clique fora ou Esc): se houver alterações não salvas, pergunta antes. */
+async function requestCloseSettings() {
+  if (!settingsOpen() || S.confirmResolve) return;
+  if (snapSettings() !== settingsSnap) {
+    const choice = await askUnsaved();
+    if (choice === 'keep') return;
+    if (choice === 'save' && !(await saveSettings())) return; // não salvou: fica aberto mostrando o motivo
+  }
+  $('#settings').classList.add('hidden');
+}
+/** Clique no fundo escuro (só se o clique COMEÇOU e terminou nele: arrastar uma seleção de texto para fora não fecha). */
+function onBackdrop(el, fn) {
+  let down = false;
+  el.addEventListener('pointerdown', (e) => { down = !!e && e.target === el; });
+  el.addEventListener('click', (e) => { const ok = down && !!e && e.target === el; down = false; if (ok) fn(); });
 }
 async function runDiag() {
   const out = $('#diag'); out.textContent = 'Executando…';
@@ -937,7 +998,7 @@ async function runDiag() {
 
 // ---------- renderização ----------
 function render() {
-  syncDiscord();
+  syncDiscord(); syncRich();
   const st = machine.state, inRoom = st === 'IN_ROOM' || st === 'LEAVING';
   $('#lobby').classList.toggle('hidden', inRoom); $('#roomView').classList.toggle('hidden', !inRoom);
   $('#btnCreate').disabled = st !== 'LOBBY'; $('#btnJoin').disabled = st !== 'LOBBY';
@@ -985,11 +1046,22 @@ $('#codeIn').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#btn
 $('#lobbyName').addEventListener('input', () => { $('#myName').value = $('#lobbyName').value; });
 $('#btnLobbySettings').addEventListener('click', () => openSettings());
 $('#btnSettings').addEventListener('click', () => openSettings());
-$('#btnCloseSettings').addEventListener('click', () => $('#settings').classList.add('hidden'));
-$('#btnSave').addEventListener('click', async () => {
-  try { const tv = V.parseTurnLines($('#turnLines').value); await saveCfg(); S.name = S.cfg.hostName || S.name; $('#lobbyName').value = S.cfg.hostName; $('#settingsMsg').textContent = tv.errors.length ? 'Salvo, mas ignorei linhas do TURN: ' + tv.errors.join(' ') : 'Configurações salvas.'; if (machine.state === 'IN_ROOM' && S.helloSent) sendHello(); renderUplink(); }
-  catch (e) { $('#settingsMsg').textContent = 'Falha ao salvar: ' + e.message; }
-});
+$('#btnCloseSettings').addEventListener('click', () => requestCloseSettings());
+onBackdrop($('#settings'), () => requestCloseSettings());
+onBackdrop($('#picker'), () => $('#picker').classList.add('hidden'));
+onBackdrop($('#confirmDlg'), () => S.confirmResolve && S.confirmResolve('keep'));
+$('#cfmSave').addEventListener('click', () => S.confirmResolve && S.confirmResolve('save'));
+$('#cfmDiscard').addEventListener('click', () => S.confirmResolve && S.confirmResolve('discard'));
+$('#cfmKeep').addEventListener('click', () => S.confirmResolve && S.confirmResolve('keep'));
+if (typeof document.addEventListener === 'function') {
+  document.addEventListener('keydown', (e) => {
+    if (!e || e.key !== 'Escape') return;
+    if (S.confirmResolve) S.confirmResolve('keep');
+    else if (settingsOpen()) requestCloseSettings();
+    else if (!$('#picker').classList.contains('hidden')) $('#picker').classList.add('hidden');
+  });
+}
+$('#btnSave').addEventListener('click', () => saveSettings());
 $('#btnDiag').addEventListener('click', () => runDiag().catch((e) => { $('#diag').textContent = 'Falha: ' + e.message; }));
 $('#btnMic').addEventListener('click', () => toggleMic());
 $('#btnDeaf').addEventListener('click', () => { S.deafened = !S.deafened; applyAllAudio(); sound(S.deafened ? 'deafOn' : 'deafOff', true); render(); });

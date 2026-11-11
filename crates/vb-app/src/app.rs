@@ -246,6 +246,7 @@ pub fn run() {
     let sh = Shared::new(dir.clone(), proxy.clone());
     sh.log.info("VideoBridge started (idle)", Some(json!({"version": env!("CARGO_PKG_VERSION")})));
     platform::register_protocol();
+    platform::register_discord_protocol(crate::rich::APP_ID);
     platform::set_autostart(sh.config().autostart);
     { let s = sh.clone(); rt.spawn(async move { s.startup_cleanup().await }); }
     { let s = sh.clone(); rt.spawn(async move { s.update_loop().await }); }

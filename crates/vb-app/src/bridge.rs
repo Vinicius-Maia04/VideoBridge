@@ -3,14 +3,16 @@ use serde_json::{json, Value};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tao::event_loop::EventLoopProxy;
 use vb_audio::{Event as AudioEvent, Policy};
 use vb_core::config::{self, Config};
 use vb_core::discord::{self, Announcement, DiscordClient, DiscordSession};
 use vb_core::logger::Logger;
+use vb_core::presence::{self, Presence};
 use vb_core::relay::{self, Event as RelayEvent, Relay, RelayConfig};
 use vb_core::room;
+use vb_core::rpc::RoomPresence;
 
 pub enum UserEvent {
     Open(Option<String>),
@@ -31,17 +33,22 @@ pub enum UserEvent {
 struct Session {
     relay: Arc<Relay>,
     alone: bool,
+    presence: Arc<Mutex<Presence>>,
 }
 
 pub struct Shared {
     pub cfg: Mutex<Config>,
     pub cfg_file: PathBuf,
     pub dir: PathBuf,
-    pub log: Logger,
+    pub log: Arc<Logger>,
     pub proxy: EventLoopProxy<UserEvent>,
     pub live: AtomicBool,
     session: Mutex<Option<Session>>,
     discord: Mutex<Option<DiscordSession>>,
+    /// Último aviso enviado (o vigia reaproveita título, convite e link).
+    last_ann: Mutex<Option<Announcement>>,
+    /// Rich Presence do Discord (convite pelo perfil).
+    rich: crate::rich::Rich,
     discord_client: DiscordClient,
     audio: Arc<Mutex<vb_audio::Service>>,
 }
@@ -67,15 +74,23 @@ fn announcement(v: &Value) -> Announcement {
 impl Shared {
     pub fn new(dir: PathBuf, proxy: EventLoopProxy<UserEvent>) -> Arc<Self> {
         let cfg_file = dir.join("config.json");
+        let log = Arc::new(Logger::new(Some(dir.join("logs").join("videobridge.log"))));
+        let (join_proxy, log2) = (proxy.clone(), log.clone());
+        // quem entra pelo perfil: o Discord entrega o código da sala e o app abre a janela já entrando nela
+        let on_join: crate::rich::OnJoin = Arc::new(move |code: String| { let _ = join_proxy.send_event(UserEvent::Open(Some(code))); });
+        let on_log: crate::rich::OnLog = Arc::new(move |level: &str, msg: &str| match level { "warn" => log2.warn(msg, None), _ => log2.info(msg, None) });
+        let rich = crate::rich::Rich::spawn(on_join, on_log);
         Arc::new(Self {
             cfg: Mutex::new(config::load(&cfg_file)),
             cfg_file,
-            log: Logger::new(Some(dir.join("logs").join("videobridge.log"))),
+            log,
             dir,
             proxy,
             live: AtomicBool::new(false),
             session: Mutex::new(None),
             discord: Mutex::new(None),
+            last_ann: Mutex::new(None),
+            rich,
             discord_client: DiscordClient::new(),
             audio: Arc::new(Mutex::new(vb_audio::Service::new())),
         })
@@ -115,26 +130,41 @@ impl Shared {
     /// A janela fechou (ou o app vai sair): avisa a sala, solta o relay, apaga o aviso do Discord, para o áudio.
     pub async fn on_window_closed(self: &Arc<Self>) {
         self.live.store(false, Ordering::SeqCst);
-        self.close_session(true);
+        self.close_session(true, true);
         let me = self.clone();
         let _ = tokio::task::spawn_blocking(move || { if let Ok(mut a) = me.audio.lock() { a.stop(); } }).await;
         self.end_discord().await;
         self.log.info("Window closed; engine released", None);
     }
 
-    fn close_session(&self, say_bye: bool) {
-        let Some(s) = self.session.lock().expect("session").take() else { return };
+    /// Encerra a sessão da sala. Se eu sou o dono do aviso do Discord e ainda há gente na sala, o relay NÃO é
+    /// fechado: um "vigia" continua ouvindo e só apaga o aviso quando o último participante sair.
+    /// Devolve `true` se o vigia assumiu o aviso.
+    fn close_session(self: &Arc<Self>, say_bye: bool, allow_guard: bool) -> bool {
+        let Some(s) = self.session.lock().expect("session").take() else { return false };
+        self.rich.clear(); // saí da sala: o perfil deixa de oferecer entrada
+        let (people, _) = s.presence.lock().map(|p| p.snapshot(Instant::now(), presence::TTL)).unwrap_or_default();
+        let room_open = people > 0 && !s.presence.lock().map(|p| p.is_closed()).unwrap_or(true);
+        let discord = if allow_guard && room_open { self.discord.lock().expect("discord").take() } else { None };
+        let base = self.last_ann.lock().expect("ann").clone();
+        let relay = s.relay.clone();
+        let t = if s.alone && !room_open { "closed" } else { "bye" };
+        let guarded = discord.is_some() && base.is_some();
         if say_bye {
-            let relay = s.relay.clone();
-            let t = if s.alone { "closed" } else { "bye" };
-            tokio::spawn(async move {
-                let _ = relay.publish(json!({ "t": t })).await;
-                tokio::time::sleep(Duration::from_millis(1500)).await;
-                relay.close();
-            });
-        } else {
-            s.relay.close();
+            let relay = relay.clone();
+            tokio::spawn(async move { let _ = relay.publish(json!({ "t": t })).await; });
         }
+        if let (Some(sess), Some(base), true) = (discord, base, guarded) {
+            self.log.info("Discord guard started", Some(json!({"people": people})));
+            tokio::spawn(guard_loop(self.clone(), relay, s.presence, sess, base));
+            return true;
+        }
+        if say_bye {
+            tokio::spawn(async move { tokio::time::sleep(Duration::from_millis(1500)).await; relay.close(); });
+        } else {
+            relay.close();
+        }
+        false
     }
 
     async fn end_discord(&self) {
@@ -155,14 +185,18 @@ impl Shared {
             }
             None => (room::new_secret(), cfg.signaling.relay.clone()),
         };
-        self.close_session(false);
+        self.close_session(false, false);
         let (relay, mut rx) = Relay::start(RelayConfig { relay: relay_url.clone(), secret: secret.clone(), role: peer_id.into(), skip_history: true });
-        *self.session.lock().expect("session") = Some(Session { relay, alone: true });
+        let presence = Arc::new(Mutex::new(Presence::default()));
+        *self.session.lock().expect("session") = Some(Session { relay, alone: true, presence: presence.clone() });
         let me = self.clone();
         tokio::spawn(async move {
             while let Some(ev) = rx.recv().await {
                 match ev {
-                    RelayEvent::Message(m) => me.js(emit("sig:message", &m)),
+                    RelayEvent::Message(m) => {
+                        if let Ok(mut p) = presence.lock() { p.on_message(&m, Instant::now()); }
+                        me.js(emit("sig:message", &m));
+                    }
                     RelayEvent::Status { state, error } => {
                         me.log.info("Relay status", Some(json!({"state": state.as_str(), "error": error})));
                         me.js(emit("sig:status", &json!({"state": state.as_str(), "error": error})));
@@ -219,13 +253,15 @@ impl Shared {
                 self.end_discord().await; // no máximo um aviso ativo
                 let hook = discord::parse_webhook_url(&cfg.discord.webhook_url).map_err(|e| e.to_string())?;
                 let sess = DiscordSession::spawn(self.discord_client.clone(), hook, self.dir.clone());
-                let id = sess.announce(announcement(&a0)).await.map_err(|e| e.to_string())?;
+                let ann = announcement(&a0);
+                let id = sess.announce(ann.clone()).await.map_err(|e| e.to_string())?;
+                *self.last_ann.lock().expect("ann") = Some(ann);
                 *self.discord.lock().expect("discord") = Some(sess);
                 Ok(json!(id))
             }
             "discord:update" => {
                 let s = self.discord.lock().expect("discord").clone();
-                match s { Some(s) => { s.update(announcement(&a0)); Ok(json!(true)) } None => Ok(Value::Null) }
+                match s { Some(s) => { let ann = announcement(&a0); *self.last_ann.lock().expect("ann") = Some(ann.clone()); s.update(ann); Ok(json!(true)) } None => Ok(Value::Null) }
             }
             "discord:end" => { self.end_discord().await; Ok(Value::Null) }
             // Passagem de bastão: o dono da mensagem vai sair e a sala continua.
@@ -242,11 +278,29 @@ impl Shared {
                 let (Some(mid), true) = (mid, a0["webhookId"].as_str() == Some(hook.id.as_str())) else { return Ok(json!(false)) };
                 self.end_discord().await;
                 let sess = DiscordSession::adopt(self.discord_client.clone(), hook, self.dir.clone(), mid.to_string(), a0["started"].as_u64().unwrap_or_else(discord::now_unix));
-                sess.update(announcement(&a0));
+                let ann = announcement(&a0);
+                *self.last_ann.lock().expect("ann") = Some(ann.clone());
+                sess.update(ann);
                 *self.discord.lock().expect("discord") = Some(sess);
                 self.log.info("Discord announcement adopted", None);
                 Ok(json!(true))
             }
+            // Convite pelo perfil do Discord (Rich Presence). `code` = convite da sala; o resto vem da interface.
+            "rich:update" => {
+                let cfg = self.config();
+                let parsed = a0["code"].as_str().and_then(|c| room::parse_code(c).ok().map(|p| (c.to_string(), p.secret)));
+                let (Some((code, secret)), true) = (parsed, cfg.discord.presence) else { self.rich.clear(); return Ok(json!(false)) };
+                self.rich.set(RoomPresence {
+                    code,
+                    party_id: room::party_id(&secret),
+                    people: a0["people"].as_u64().unwrap_or(1).min(99) as u32,
+                    max: a0["max"].as_u64().unwrap_or(6).clamp(1, 99) as u32,
+                    sources: a0["sources"].as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(|s| s.chars().take(120).collect())).take(6).collect()).unwrap_or_default(),
+                    started: 0,
+                });
+                Ok(json!(true))
+            }
+            "rich:clear" => { self.rich.clear(); Ok(Value::Null) }
             "discord:release" => {
                 let s = self.discord.lock().expect("discord").take();
                 if let Some(s) = s { s.release().await; }
@@ -264,7 +318,11 @@ impl Shared {
                 relay.publish(a0).await.map_err(|e| e.to_string())?;
                 Ok(json!(true))
             }
-            "sig:close" => { self.close_session(false); Ok(json!(true)) }
+            "sig:close" => {
+                // saí da sala: se ainda há gente, o vigia mantém o aviso; senão apaga agora
+                if !self.close_session(false, true) { self.end_discord().await; }
+                Ok(json!(true))
+            }
             "sig:selfTest" => Ok(serde_json::to_value(relay::self_test(&self.config().signaling.relay).await).map_err(|e| e.to_string())?),
             "appaudio:status" => Ok(serde_json::to_value(self.audio.lock().expect("audio").status()).map_err(|e| e.to_string())?),
             "appaudio:list" => {
@@ -337,6 +395,28 @@ impl Shared {
             _ => Err(format!("canal desconhecido: {ch}")),
         }
     }
+}
+
+/// O dono saiu mas a sala continua: mantém o aviso (atualizado com quem está na sala) e o apaga quando esvaziar.
+async fn guard_loop(sh: Arc<Shared>, relay: Arc<Relay>, presence: Arc<Mutex<Presence>>, sess: DiscordSession, base: Announcement) {
+    const MAX_LIFETIME: Duration = Duration::from_secs(12 * 3600); // trava de segurança
+    let (started, mut last) = (Instant::now(), String::new());
+    loop {
+        tokio::time::sleep(Duration::from_secs(10)).await;
+        let (people, sources, closed) = match presence.lock() {
+            Ok(p) => { let (n, s) = p.snapshot(Instant::now(), presence::TTL); (n, s, p.is_closed()) }
+            Err(_) => break,
+        };
+        if closed || people == 0 || started.elapsed() > MAX_LIFETIME { break; }
+        let mut a = base.clone();
+        a.people = people;
+        a.sources = sources;
+        let sig = format!("{a:?}");
+        if sig != last { sess.update(a); last = sig; }
+    }
+    sess.end().await;
+    relay.close();
+    sh.log.info("Discord guard finished: room empty", None);
 }
 
 #[cfg(test)]

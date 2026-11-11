@@ -35,6 +35,8 @@
     discordHandoffInfo: () => invoke('discord:handoffInfo'),
     discordAdopt: (m) => invoke('discord:adopt', m),
     discordRelease: () => invoke('discord:release'),
+    richUpdate: (m) => invoke('rich:update', m),
+    richClear: () => invoke('rich:clear'),
     copy: (t) => invoke('clipboard:write', t),
     sigOpen: (code, peerId) => invoke('sig:open', code, peerId),
     sigSend: (m) => invoke('sig:send', m),

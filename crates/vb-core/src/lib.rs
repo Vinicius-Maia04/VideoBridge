@@ -4,7 +4,9 @@
 pub mod config;
 pub mod discord;
 pub mod logger;
+pub mod presence;
 pub mod relay;
 pub mod room;
+pub mod rpc;
 pub mod turn;
 pub mod update;

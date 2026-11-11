@@ -47,6 +47,8 @@ pub struct DiscordCfg {
     pub announce: bool,
     pub webhook_url: String,
     pub join_page_url: String,
+    /// Convite pelo perfil do Discord (Rich Presence). Não precisa de webhook.
+    pub presence: bool,
 }
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
@@ -88,7 +90,7 @@ impl Default for Webcam { fn default() -> Self { Self { enabled: false, device_i
 impl Default for Signaling { fn default() -> Self { Self { relay: crate::room::DEFAULT_RELAY.into(), max_participants: 6 } } }
 impl Default for Sfx { fn default() -> Self { Self { enabled: true, volume: 0.5 } } }
 impl Default for AppAudioCfg { fn default() -> Self { Self { enabled: true, allow_new: true, blocked: vec![], allowed: vec![] } } }
-impl Default for DiscordCfg { fn default() -> Self { Self { announce: false, webhook_url: String::new(), join_page_url: String::new() } } }
+impl Default for DiscordCfg { fn default() -> Self { Self { announce: false, webhook_url: String::new(), join_page_url: String::new(), presence: true } } }
 impl Default for Hotkeys {
     fn default() -> Self {
         Self { toggle_stream: "Control+Shift+V".into(), toggle_camera: "Control+Shift+C".into(), toggle_mic: "Control+Shift+M".into() }
@@ -318,6 +320,7 @@ mod tests {
         for k in ["hostName", "systemAudioDevice", "shareTurn", "appAudio", "startMinimized"] {
             assert!(v.get(k).is_some(), "falta {k}");
         }
+        assert_eq!(v["discord"]["presence"], json!(true), "Rich Presence ligado por padrão");
         assert_eq!(v["appAudio"]["allowNew"], json!(true));
         assert_eq!(v["hotkeys"]["toggleStream"], json!("Control+Shift+V"));
     }
