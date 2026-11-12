@@ -101,6 +101,21 @@ fn escape_md(s: &str) -> String {
     o
 }
 
+/// `https://x.github.io/repo/#VB3.…` → `https://x.github.io/repo/` (pasta da página-ponte, onde fica o `logo.png`).
+fn page_base(join_url: &str) -> Option<String> {
+    let mut u = join_url.split(['#', '?']).next()?.to_string();
+    if !u.starts_with("https://") {
+        return None;
+    }
+    if u.ends_with(".html") {
+        u.truncate(u.rfind('/')? + 1);
+    }
+    if !u.ends_with('/') {
+        u.push('/');
+    }
+    Some(u)
+}
+
 fn truncate(s: &str, max: usize) -> String {
     if s.chars().count() <= max { s.to_string() } else { format!("{}…", s.chars().take(max - 1).collect::<String>()) }
 }
@@ -140,6 +155,9 @@ pub fn build_payload(a: &Announcement, live: bool, started: u64) -> Result<Value
     });
     if !a.join_url.is_empty() {
         embed["url"] = json!(a.join_url); // o título do cartão também vira link
+        if let Some(base) = page_base(&a.join_url) {
+            embed["thumbnail"] = json!({ "url": format!("{base}logo.png") }); // a página-ponte hospeda a logo
+        }
     }
     if a.people > 0 {
         embed["footer"] = json!({"text": format!("👥 {} na sala", a.people)});
@@ -411,6 +429,19 @@ mod tests {
         a.join_url.clear();
         let p = build_payload(&a, true, 1).unwrap();
         assert!(!p["embeds"][0]["description"].as_str().unwrap().contains("[Entrar na sala]("), "sem link morto");
+    }
+
+    #[test]
+    fn thumbnail_comes_from_the_join_page_folder() {
+        assert_eq!(page_base("https://u.github.io/repo/#VB3.abc").as_deref(), Some("https://u.github.io/repo/"));
+        assert_eq!(page_base("https://u.github.io/repo#VB3.abc").as_deref(), Some("https://u.github.io/repo/"));
+        assert_eq!(page_base("https://u.github.io/repo/index.html#x").as_deref(), Some("https://u.github.io/repo/"));
+        assert_eq!(page_base("http://inseguro/#x"), None);
+        let p = build_payload(&ann(), true, 1).unwrap();
+        assert_eq!(p["embeds"][0]["thumbnail"]["url"], "https://x.github.io/join/logo.png");
+        let mut a = ann();
+        a.join_url.clear();
+        assert!(build_payload(&a, true, 1).unwrap()["embeds"][0].get("thumbnail").is_none());
     }
 
     #[test]

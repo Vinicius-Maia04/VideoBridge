@@ -74,6 +74,8 @@ pub fn activity(p: &RoomPresence) -> Value {
         // `party.id` é obrigatório: sem ele o Discord não mostra "Pedir para entrar"
         "party": { "id": p.party_id, "size": [cur, max] },
         "instance": true,
+        // imagem enviada em "Rich Presence → Art Assets" no portal de desenvolvedores, com a chave `logo`
+        "assets": { "large_image": "logo", "large_text": "VideoBridge" },
     });
     if join_secret_ok(&p.code) {
         a["secrets"] = json!({ "join": p.code });
@@ -149,6 +151,7 @@ mod tests {
         assert_eq!(a["party"]["id"], p.party_id);
         assert_eq!(a["secrets"]["join"], p.code);
         assert_eq!(a["instance"], true);
+        assert_eq!(a["assets"]["large_image"], "logo");
     }
 
     #[test]

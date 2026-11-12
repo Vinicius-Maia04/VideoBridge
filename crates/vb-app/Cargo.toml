@@ -15,6 +15,9 @@ default = []
 # Depende de `webview2-com` na MESMA versão que o `wry` usa; se a compilação reclamar, desligue.
 auto-permissions = []
 
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
+
 [target.'cfg(windows)'.dependencies]
 vb-core = { path = "../vb-core" }
 vb-audio = { path = "../vb-audio" }

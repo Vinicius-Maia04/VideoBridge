@@ -112,7 +112,7 @@ test('recebe oferta, responde, cria o tile com o nome da fonte e remove quando a
   const ans = t.sent('desc').find((m) => m.desc.type === 'answer'); assert.ok(ans); assert.equal(ans.to, LOW);
   assert.equal(t.$('#tiles').children.length, 1); assert.equal(t.$('#emptyStage').classList.contains('hidden'), true);
   assert.equal(t.$('#tiles').children[0].children[1].children[0].textContent, 'Ana — Jogo');
-  assert.match(t.$('#participants').children.at(-1).children.at(-1).textContent, /🖥/);
+  assert.ok(t.$('#participants').children.at(-1).children.at(-1).children.some((i) => /i-monitor/.test(i.className)), 'ícone de tela na lista de pessoas');
   // renegociação sem a fonte -> tile some
   t.msg({ t: 'desc', r: LOW, to: t.myId(), desc: { type: 'offer', sdp: 'v=0\r\n' }, meta: [], muted: false }); await t.tick(8);
   assert.equal(t.$('#tiles').children.length, 0); assert.equal(t.$('#emptyStage').classList.contains('hidden'), false);

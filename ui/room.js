@@ -306,7 +306,7 @@ function renderMixer(force) {
     : st && !st.supported ? `Indisponível neste PC: ${st.reason}`
     : appCfg().enabled === false ? 'Desativado em ⋮ Configurações → Áudio por aplicativo.'
     : S.appNote ? `Não foi possível listar os aplicativos: ${S.appNote}`
-    : hasScreen() ? 'Ligue o 🔊 para transmitir o áudio junto com a sua tela. As escolhas já valem desde agora.'
+    : hasScreen() ? 'Ligue o botão de áudio (alto-falante) para transmitir o som junto com a sua tela. As escolhas já valem desde agora.'
     : 'O áudio do sistema só é transmitido junto com uma tela compartilhada. As escolhas já valem desde agora.';
 }
 function onAppEvent(ev) {
@@ -316,7 +316,7 @@ function onAppEvent(ev) {
   } else if (ev.event === 'capture_error') { S.appNotes[String(ev.app)] = String(ev.message || 'falhou'); vb.log('warn', 'App capture failed', { app: ev.app, message: ev.message }); renderMixer(true); }
   else if (ev.event === 'exit') {
     const it = nativeItem();
-    if (it) { say('O helper de áudio por aplicativo parou inesperadamente. Clique em 🔊 para ligar de novo.', 'err'); vb.log('error', 'Audio helper exited', { code: ev.code, error: ev.error }); removeLocal(it); }
+    if (it) { say('O helper de áudio por aplicativo parou inesperadamente. Clique no botão de áudio (alto-falante) para ligar de novo.', 'err'); vb.log('error', 'Audio helper exited', { code: ev.code, error: ev.error }); removeLocal(it); }
   }
 }
 function toggleMixer() {
@@ -676,9 +676,9 @@ function addTile(key, { local = false, ownerId = null, sid = null, role = 'scree
 
   // volume/mudo da transmissão = áudio do sistema de quem compartilha (só aparece se essa pessoa estiver enviando áudio)
   if (!local && role === 'screen') {
-    const muteBtn = el('button', { text: '🔊', title: 'Silenciar esta transmissão' });
+    const muteIc = el('span', { class: 'ic i-volume' }), muteBtn = el('button', { title: 'Silenciar esta transmissão' }, muteIc);
     const vol = el('input', { type: 'range', min: '0', max: '1', step: '0.05', value: '1', title: 'Volume da transmissão' });
-    const syncUi = () => { const v = volOf(ownerId); muteBtn.textContent = v.sysMuted || v.sys === 0 ? '🔇' : '🔊'; vol.value = String(v.sys); };
+    const syncUi = () => { const v = volOf(ownerId); muteIc.className = 'ic ' + (v.sysMuted || v.sys === 0 ? 'i-volume-off' : 'i-volume'); vol.value = String(v.sys); };
     muteBtn.addEventListener('click', () => { const v = volOf(ownerId); v.sysMuted = !v.sysMuted; applyOwnerAudio(ownerId); syncUi(); });
     vol.addEventListener('input', () => { const v = volOf(ownerId); v.sys = Number(vol.value); v.sysMuted = false; applyOwnerAudio(ownerId); syncUi(); });
     const group = el('span', { class: 'row' }, muteBtn, vol);
@@ -707,7 +707,7 @@ function addTile(key, { local = false, ownerId = null, sid = null, role = 'scree
   bar.append(el('button', { text: '−', title: 'Diminuir zoom', onclick: () => zoomCenter(1 / 1.25) }), zlbl, el('button', { text: '+', title: 'Aumentar zoom', onclick: () => zoomCenter(1.25) }));
 
   // foco e tela cheia (do cartão inteiro, para manter os controles)
-  const focusBtn = el('button', { text: 'Focar', title: 'Destacar esta transmissão' });
+  const focusBtn = el('button', { title: 'Destacar esta transmissão' }, el('span', { class: 'ic i-focus' }), 'Focar');
   focusBtn.addEventListener('click', () => setFocus(S.focusKey === key ? null : key));
   const toggleFs = () => {
     const root = tile.root;
@@ -715,8 +715,8 @@ function addTile(key, { local = false, ownerId = null, sid = null, role = 'scree
     const r = root.requestFullscreen && root.requestFullscreen();
     if (r && r.catch) r.catch(() => say('Não foi possível entrar em tela cheia.', 'warn'));
   };
-  bar.append(focusBtn, el('button', { text: '⛶', title: 'Tela cheia', onclick: toggleFs }));
-  if (local) bar.append(el('button', { class: 'stop', text: 'Parar', onclick: onStop }));
+  bar.append(focusBtn, el('button', { title: 'Tela cheia', onclick: toggleFs }, el('span', { class: 'ic i-maximize' })));
+  if (local) bar.append(el('button', { class: 'stop', onclick: onStop }, el('span', { class: 'ic i-stop' }), 'Parar'));
   wrap.addEventListener('dblclick', toggleFs);
 
   const root = el('div', { class: 'tile' }, wrap, bar);
@@ -1023,7 +1023,8 @@ function render() {
       sl.value = String(v.mic); sl.addEventListener('input', () => { v.mic = Number(sl.value); v.micMuted = false; applyOwnerAudio(peer.id); });
       kids.push(sl);
     }
-    kids.push(el('span', { class: 'ico', text: (kinds.includes('screen') ? '🖥 ' : '') + (kinds.includes('camera') ? '📷 ' : '') + (kinds.includes('sysaudio') ? '🔊 ' : '') + (muted ? '🔇' : '🎙') }));
+    const icos = [kinds.includes('screen') && 'monitor', kinds.includes('camera') && 'camera', kinds.includes('sysaudio') && 'volume', muted ? 'mic-off' : 'mic'].filter(Boolean);
+    kids.push(el('span', { class: 'ico' }, ...icos.map((n) => el('span', { class: 'ic i-' + n }))));
     return el('div', { class: 'person' }, ...kids);
   };
   box.append(row(S.name, true, isMuted(), S.local.map((i) => i.kind), ''));

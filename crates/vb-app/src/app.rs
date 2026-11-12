@@ -21,8 +21,16 @@ const ORIGIN: &str = "https://vb.localhost/";
 const BRIDGE_JS: &str = include_str!("bridge.js");
 const TRAY: &[u8] = include_bytes!("../../../ui/assets/tray.png");
 const TRAY_LIVE: &[u8] = include_bytes!("../../../ui/assets/tray-live.png");
+const WINDOW_ICON: &[u8] = include_bytes!("../assets/window.png");
 /// Sem isto o Chromium reduz timers e renderização com a janela minimizada/oculta e a transmissão engasga.
 const BROWSER_ARGS: &str = "--autoplay-policy=no-user-gesture-required --disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows --disable-features=msSmartScreenProtection";
+
+/// Ícone da janela (barra de título e Alt+Tab).
+fn window_icon() -> Option<tao::window::Icon> {
+    let img = image::load_from_memory(WINDOW_ICON).ok()?.into_rgba8();
+    let (w, h) = img.dimensions();
+    tao::window::Icon::from_rgba(img.into_raw(), w, h).ok()
+}
 
 fn icon(bytes: &[u8]) -> Icon {
     let img = image::load_from_memory(bytes).expect("ícone PNG embutido").into_rgba8();
@@ -62,7 +70,7 @@ impl Ui {
             if self.page_ready { self.flush_invite(); }
             return;
         }
-        let window = match WindowBuilder::new().with_title("VideoBridge").with_inner_size(LogicalSize::new(1280.0, 780.0)).with_min_inner_size(LogicalSize::new(900.0, 560.0)).build(target) {
+        let window = match WindowBuilder::new().with_title("VideoBridge").with_window_icon(window_icon()).with_inner_size(LogicalSize::new(1280.0, 780.0)).with_min_inner_size(LogicalSize::new(900.0, 560.0)).build(target) {
             Ok(w) => w,
             Err(e) => { sh.log.error("Falha ao criar a janela", Some(json!({"error": e.to_string()}))); return; }
         };

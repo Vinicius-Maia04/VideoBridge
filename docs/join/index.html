@@ -1,15 +1,30 @@
 <!doctype html>
 <html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>VideoBridge — Assistir</title>
-<style>body{font:16px system-ui,sans-serif;background:#14161a;color:#e6e8ec;display:grid;place-items:center;min-height:100vh;margin:0}
-main{max-width:480px;padding:24px;text-align:center}a.btn,button{display:inline-block;background:#5b8cff;color:#fff;border:0;border-radius:8px;padding:12px 20px;font-size:16px;text-decoration:none;cursor:pointer}
-code{display:block;word-break:break-all;background:#1c1f26;padding:10px;border-radius:6px;margin:14px 0;user-select:all}.mut{color:#8b93a1;font-size:14px}</style></head>
+<title>VideoBridge — Entrar na sala</title>
+<link rel="icon" type="image/svg+xml" href="logo.svg">
+<meta property="og:title" content="VideoBridge"><meta property="og:description" content="Entre na sala e assista a transmissão.">
+<meta property="og:image" content="logo.png">
+<style>
+:root{--bg:#0f1014;--panel:#17181d;--line:#2a2d36;--txt:#e8eaee;--mut:#8b93a1;--acc:#10b981;--accd:#0c8f64}
+*{box-sizing:border-box}[hidden]{display:none!important}
+body{font:16px/1.5 "Segoe UI",system-ui,sans-serif;background:radial-gradient(1000px 480px at 50% -10%,#12281f,var(--bg) 62%) fixed,var(--bg);color:var(--txt);display:grid;place-items:center;min-height:100vh;margin:0;padding:20px}
+main{width:min(460px,100%);background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:30px;text-align:center;box-shadow:0 24px 70px rgba(0,0,0,.5)}
+.brand{display:flex;align-items:center;justify-content:center;gap:14px;margin-bottom:6px}
+.brand img{width:56px;height:56px;filter:drop-shadow(0 6px 14px rgba(16,185,129,.35))}
+h1{margin:0;font-size:26px;letter-spacing:-.01em}
+a.btn{display:block;background:var(--acc);color:#fff;border-radius:10px;padding:13px 20px;font-weight:600;text-decoration:none;margin:14px 0 8px;box-shadow:0 1px 0 rgba(255,255,255,.18) inset}
+a.btn:hover{background:var(--accd)}
+a.ghost{background:transparent;border:1px solid var(--line);font-weight:500;box-shadow:none}a.ghost:hover{border-color:var(--acc);background:transparent}
+code{display:block;word-break:break-all;background:#101116;border:1px solid var(--line);padding:10px;border-radius:8px;margin:14px 0;user-select:all;font:13px Consolas,monospace}
+.mut{color:var(--mut);font-size:14px}
+</style></head>
 <body><main>
-<h1>🎥 VideoBridge</h1>
+<div class="brand"><img src="logo.svg" alt=""><h1>VideoBridge</h1></div>
 <p id="msg">Abrindo o VideoBridge…</p>
 <code id="code" hidden></code>
-<p><a id="open" class="btn" href="#" hidden>Abrir no VideoBridge</a></p>
-<p class="mut">Se nada abriu, instale o VideoBridge e clique no botão acima, ou abra o app → Assistir → cole o código.<br>
+<a id="open" class="btn" href="#" hidden>Abrir no VideoBridge</a>
+<a id="get" class="btn ghost" href="#" hidden>Ainda não tenho o app — baixar</a>
+<p class="mut">Se nada abriu, instale o VideoBridge e clique no botão acima, ou abra o app → Entrar → cole o código.<br>
 Esta página não envia nada para servidor algum: o código fica só no seu navegador (parte depois do #).</p>
 </main>
 <script>
@@ -17,6 +32,9 @@ Esta página não envia nada para servidor algum: o código fica só no seu nave
   var code = decodeURIComponent(location.hash.slice(1));
   var ok = /^VB3\.[A-Za-z0-9_-]{22}(\.[A-Za-z0-9_-]+)?$/.test(code);
   var msg = document.getElementById('msg');
+  // o link de download sai do endereço do GitHub Pages: https://USUARIO.github.io/REPO/ → github.com/USUARIO/REPO/releases/latest
+  var m = /^([a-z0-9-]+)\.github\.io$/i.exec(location.hostname), repo = location.pathname.split('/').filter(Boolean)[0];
+  if (m && repo) { var g = document.getElementById('get'); g.href = 'https://github.com/' + m[1] + '/' + repo + '/releases/latest'; g.hidden = false; }
   if (!ok) { msg.textContent = 'Link de convite inválido ou incompleto.'; return; }
   var url = 'videobridge://join/' + code;
   var c = document.getElementById('code'); c.textContent = code; c.hidden = false;

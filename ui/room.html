@@ -1,32 +1,32 @@
 <!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self'; script-src 'self'; connect-src 'none'">
-<title>VideoBridge</title><link rel="stylesheet" href="app.css"></head><body>
+<title>VideoBridge</title><link rel="icon" type="image/svg+xml" href="assets/logo.svg"><link rel="stylesheet" href="app.css"></head><body>
 
 <div id="lobby"><div class="card">
-  <h1>🎥 VideoBridge</h1>
+  <div class="brand"><img class="logo" src="assets/logo.svg" alt=""><h1>VideoBridge</h1></div>
   <div class="mut">Compartilhe tela e câmera com seus amigos, direto entre os computadores. Sem anúncios, sem plano pago.</div>
   <label>Seu nome <input id="lobbyName" type="text" maxlength="40" class="grow" placeholder="Como os outros vão ver você"></label>
-  <button id="btnCreate" class="btn">Criar sala</button>
+  <button id="btnCreate" class="btn"><span class="ic i-plus"></span>Criar sala</button>
   <div class="divider">ou entrar numa sala</div>
-  <div class="row"><input id="codeIn" type="text" class="grow" placeholder="Cole o código (VB3…) ou o link"><button id="btnJoin" class="btn ghost">Entrar</button></div>
+  <div class="row"><input id="codeIn" type="text" class="grow" placeholder="Cole o código (VB3…) ou o link"><button id="btnJoin" class="btn ghost">Entrar<span class="ic ml i-arrow-right"></span></button></div>
   <div id="lobbyMsg" class="warn"></div>
-  <div class="row"><button id="btnLobbySettings" class="btn ghost">⚙ Configurações</button><span class="mut" id="ver"></span></div>
+  <div class="row"><button id="btnLobbySettings" class="btn ghost"><span class="ic i-settings"></span>Configurações</button><span class="mut" id="ver"></span></div>
 </div></div>
 
 <div id="roomView" class="hidden">
   <header class="topbar">
-    <div class="left"><b>VideoBridge</b><span class="chip" id="roomChip" title="Código da sala"></span><span class="dot" id="relayDot" title="Relay de signaling"></span></div>
+    <div class="left"><img class="mark" src="assets/logo.svg" alt=""><b>VideoBridge</b><span class="chip" id="roomChip" title="Código da sala"></span><span class="dot" id="relayDot" title="Relay de signaling"></span></div>
     <div class="controls">
-      <button id="btnMic" class="cbtn off" title="Microfone">🎙</button>
-      <button id="btnDeaf" class="cbtn" title="Ouvir os outros">🎧</button>
-      <button id="btnGear" class="cbtn" title="Qualidade da transmissão">⚙</button>
-      <button id="btnScreen" class="cbtn" title="Compartilhar tela">🖥<span id="screenCount" class="badge"></span></button>
-      <button id="btnSys" class="cbtn" title="Compartilhe uma tela para transmitir o áudio do sistema" disabled>🔊</button>
-      <button id="btnMixer" class="cbtn" title="Áudio por aplicativo: escolha o que é transmitido">🎚</button>
-      <button id="btnCam" class="cbtn" title="Compartilhar câmera">📷</button>
-      <button id="btnLeave" class="cbtn stop" title="Sair da sala">📞</button>
+      <button id="btnMic" class="cbtn off" title="Microfone"><span class="ic i-mic"></span></button>
+      <button id="btnDeaf" class="cbtn" title="Ouvir os outros"><span class="ic i-headphones"></span></button>
+      <button id="btnGear" class="cbtn neutral" title="Qualidade da transmissão"><span class="ic i-sliders"></span></button>
+      <button id="btnScreen" class="cbtn neutral" title="Compartilhar tela"><span class="ic i-monitor"></span><span id="screenCount" class="badge"></span></button>
+      <button id="btnSys" class="cbtn neutral" title="Compartilhe uma tela para transmitir o áudio do sistema" disabled><span class="ic i-volume"></span></button>
+      <button id="btnMixer" class="cbtn neutral" title="Áudio por aplicativo: escolha o que é transmitido"><span class="ic i-mixer"></span></button>
+      <button id="btnCam" class="cbtn neutral" title="Compartilhar câmera"><span class="ic i-camera"></span></button>
+      <button id="btnLeave" class="cbtn stop" title="Sair da sala"><span class="ic i-leave"></span></button>
     </div>
-    <div class="right"><button id="btnShareRoom" class="btn ghost">🔗 Compartilhar sala</button><button id="btnSettings" class="btn ghost" title="Configurações e diagnóstico">⋮</button></div>
+    <div class="right"><button id="btnShareRoom" class="btn ghost"><span class="ic i-link"></span>Compartilhar sala</button><button id="btnSettings" class="btn ghost" title="Configurações e diagnóstico"><span class="ic i-more"></span></button></div>
   </header>
 
   <div id="quality" class="pop hidden">
@@ -56,7 +56,7 @@
     <aside class="side"><h3><span>Participantes</span><span id="peopleCount" class="mut"></span></h3><div id="participants"></div></aside>
     <main class="stage">
       <div id="emptyStage"><div>Ninguém está transmitindo ainda.</div>
-        <div class="row"><button id="btnScreen2" class="btn">🖥 Compartilhar tela</button><button id="btnCam2" class="btn">📷 Compartilhar câmera</button></div></div>
+        <div class="row"><button id="btnScreen2" class="btn"><span class="ic i-monitor"></span>Compartilhar tela</button><button id="btnCam2" class="btn"><span class="ic i-camera"></span>Compartilhar câmera</button></div></div>
       <div id="tiles" class="tiles"></div>
     </main>
   </div>
@@ -95,7 +95,7 @@
       <label><input type="checkbox" id="sysAudio" checked> Compartilhar áudio do sistema junto com a tela</label>
       <label><input type="checkbox" id="appAudioOn" checked> Áudio por aplicativo (Windows 10 2004+)</label>
       <label>Áudio do sistema (alternativa) <select id="sysDev" class="grow"></select></label>
-      <div class="mut">Só use se o botão 🔊 falhar: escolha um dispositivo de gravação que capture o som do PC (ex.: "Mixagem estéreo" ou um cabo virtual). Em "Automático" o app tenta o loopback do Windows e, se falhar, procura a Mixagem estéreo.</div></fieldset>
+      <div class="mut">Só use se o botão de áudio do sistema (alto-falante) falhar: escolha um dispositivo de gravação que capture o som do PC (ex.: "Mixagem estéreo" ou um cabo virtual). Em "Automático" o app tenta o loopback do Windows e, se falhar, procura a Mixagem estéreo.</div></fieldset>
     <fieldset><legend>Discord</legend>
       <label><input type="checkbox" id="dcPresence"> Mostrar a sala no meu perfil do Discord (convite por "Entrar")</label>
       <div class="mut">Precisa do Discord aberto neste PC. Quem pode entrar direto é definido no Discord: Configurações → Privacidade de atividade → "Permitir que participantes do canal de voz entrem no meu jogo" (ligado) e "Permitir que amigos entrem no meu jogo" (desligado). Quem não puder entrar direto tem o pedido recusado.</div>

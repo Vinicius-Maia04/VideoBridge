@@ -21,7 +21,8 @@ class FakeEl {
   removeEventListener() {}
   append(...k) { k.forEach((c) => { if (c && typeof c === 'object') c.parent = this; this.children.push(c); }); }
   remove() { if (this.parent) this.parent.children = this.parent.children.filter((c) => c !== this); this.parent = null; }
-  setAttribute() {}
+  setAttribute(k, v) { this.attrs = this.attrs || {}; this.attrs[k] = v; if (k === 'title') this.title = v; }
+  getAttribute(k) { return (this.attrs || {})[k] ?? null; }
   getBoundingClientRect() { return { left: 0, top: 0, width: this.clientWidth, height: this.clientHeight }; }
   click() { (this.listeners.click || []).forEach((f) => f({ stopPropagation() {} })); }
   fire(t, ev = {}) { (this.listeners[t] || []).forEach((f) => f(ev)); }

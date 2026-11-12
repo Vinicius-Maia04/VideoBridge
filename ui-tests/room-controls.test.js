@@ -5,7 +5,7 @@ const { boot } = require('./helpers/room-harness');
 
 const LOW = '0000000000000000', HIGH = 'zzzzzzzzzzzzzzzz';
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-const btn = (tile, text) => tile.children[1].children.find((c) => c.textContent === text);
+const btn = (tile, text) => tile.children[1].children.find((c) => c.textContent === text || c.title === text);
 const offerSdp = (tracks) => 'v=0\r\na=vbfake:' + Buffer.from(JSON.stringify({ tracks })).toString('base64') + '\r\n';
 const remoteScreen = async (t, { audio = false } = {}) => {
   t.msg({ t: 'hello', r: LOW, name: 'Ana' }); await t.tick(4);
@@ -16,12 +16,12 @@ const remoteScreen = async (t, { audio = false } = {}) => {
 };
 
 // ===================== tela cheia, foco, zoom, volume =====================
-test('tela cheia: o botão ⛶ e o duplo clique pedem tela cheia do cartão inteiro', async () => {
+test('tela cheia: o botão (ícone de expandir) e o duplo clique pedem tela cheia do cartão inteiro', async () => {
   const t = boot(); await t.enter(); await t.shareFirstSource();
   const tile = t.$('#tiles').children[0]; let calls = 0; tile.requestFullscreen = () => { calls++; return Promise.resolve(); };
-  btn(tile, '⛶').click(); assert.equal(calls, 1);
+  btn(tile, 'Tela cheia').click(); assert.equal(calls, 1);
   tile.children[0].fire('dblclick'); assert.equal(calls, 2);
-  tile.requestFullscreen = () => Promise.reject(new Error('negado')); btn(tile, '⛶').click(); await t.tick(3);
+  tile.requestFullscreen = () => Promise.reject(new Error('negado')); btn(tile, 'Tela cheia').click(); await t.tick(3);
   assert.match(t.$('#msg').textContent, /tela cheia/);
 });
 test('o shell Rust mantém a página sem throttling e com autoplay (equivale ao backgroundThrottling:false do Electron)', () => {
@@ -60,7 +60,7 @@ test('volume/mudo da transmissão controla o áudio do sistema de quem compartil
   const group = tile.children[1].children[1]; assert.equal(group.classList.contains('hidden'), false);
   const sys = [...t.$('#tiles').children].map((x) => x.children[0].children[0]).find((v) => v.srcObject.id === 'ra1');
   assert.equal(sys.volume, 1); assert.equal(sys.muted, false);
-  group.children[0].click(); assert.equal(sys.muted, true); assert.equal(group.children[0].textContent, '🔇');
+  group.children[0].click(); assert.equal(sys.muted, true); assert.match(group.children[0].children[0].className, /i-volume-off/, 'ícone de mudo');
   group.children[1].value = '0.4'; group.children[1].fire('input'); assert.equal(sys.volume, 0.4); assert.equal(sys.muted, false);
   const sem = boot(); await sem.enter(); const t2 = await remoteScreen(sem, { audio: false });
   assert.equal(t2.children[1].children[1].classList.contains('hidden'), true, 'sem áudio do sistema, sem controle de volume');
