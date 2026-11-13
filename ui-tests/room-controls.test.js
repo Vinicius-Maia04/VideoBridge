@@ -111,9 +111,20 @@ test('sons: erros tocam o som de erro e o botão "Testar" toca mesmo com a caixa
 });
 
 // ===================== sala encerrada =====================
-test('último a sair ENCERRA a sala (closed); quem sai com outros presentes só diz bye', async () => {
-  const t = boot(); await t.enter(); t.$('#btnLeave').click(); await t.tick(8);
-  assert.equal(t.sent('closed').length, 1); assert.equal(t.sent('bye').length, 0);
+test('sair: a despedida (bye/closed) é enviada pelo processo principal, não pelo renderer; criador sozinho conta como "último a sair"', async () => {
+  const t = boot(); await t.enter(); await t.tick(2);
+  const alone = () => t.calls.filter((c) => c[0] === 'setAlone').map((c) => c[1]);
+  assert.equal(alone().at(-1), true, 'o processo principal fica sabendo que a sala está vazia');
+  t.$('#btnLeave').click(); await t.tick(8);
+  const c = t.calls.find((x) => x[0] === 'sigClose'); assert.ok(c); assert.equal(c[1].silent, false);
+  assert.equal(t.sent('closed').length + t.sent('bye').length, 0, 'o renderer não publica a despedida (não espera a rede)');
+});
+test('quem ENTROU e nunca conectou com ninguém NÃO conta como "último a sair" (não pode declarar a sala encerrada)', async () => {
+  const t = boot(); await t.enter({ code: 'VB2.BBBBBBBBBBBBBBBBBBBBBB' }); await t.tick(4);
+  const alone = () => t.calls.filter((c) => c[0] === 'setAlone').map((c) => c[1]);
+  assert.ok(alone().every((v) => v === false), 'sozinho, mas sem nunca ter visto ninguém: não é o último a sair');
+  t.msg({ t: 'hello', r: LOW, name: 'Ana' }); await t.tick(4); t.msg({ t: 'bye', r: LOW }); await t.tick(4);
+  assert.equal(alone().at(-1), true, 'depois de ter visto alguém e ficar sozinho, passa a contar');
 });
 test('código de sala encerrada é recusado na entrada (histórico contém closed)', async () => {
   const t = boot(); await t.tick(3); t.$('#codeIn').value = 'VB2.AAAAAAAAAAAAAAAAAAAAAA'; t.$('#btnJoin').click(); await t.tick(6);
@@ -135,10 +146,12 @@ test('sala sem ninguém (crash dos outros): quem entra com código e não recebe
   const k = boot({ joinWaitMs: 60 }); await k.enter({ code: 'VB2.BBBBBBBBBBBBBBBBBBBBBB' }); k.msg({ t: 'hello', r: LOW, name: 'Ana' }); await wait(140); await k.tick(3);
   assert.equal(k.$('#roomView').classList.contains('hidden'), false, 'se alguém responde, a sala existe');
 });
-test('"closed" ao vivo do único outro participante encerra a sala também para mim', async () => {
+test('"closed" ao vivo de outra pessoa NÃO me tira da sala: ela não tinha me visto; eu só mostro que estou aqui', async () => {
   const t = boot(); await t.enter({ code: 'VB2.BBBBBBBBBBBBBBBBBBBBBB' }); t.msg({ t: 'hello', r: LOW, name: 'Ana' }); await t.tick(4);
   t.msg({ t: 'closed', r: LOW }); await t.tick(6);
-  assert.equal(t.$('#roomView').classList.contains('hidden'), true); assert.match(t.$('#lobbyMsg').textContent, /encerrada/);
+  assert.equal(t.$('#roomView').classList.contains('hidden'), false, 'continuo na sala');
+  assert.equal(t.sent('hb').length, 1, 'e aviso que estou aqui (para o histórico não ficar com "closed" por último)');
+  assert.equal(t.$('#participants').children.length, 1, 'quem mandou closed saiu da lista');
 });
 test('o renderer informa o processo principal se está sozinho (para encerrar a sala ao fechar a janela)', async () => {
   const t = boot(); await t.enter(); await t.tick(2);

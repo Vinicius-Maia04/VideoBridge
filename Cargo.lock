@@ -3644,7 +3644,7 @@ checksum = "3a3b425286980a367278453f3b6d28cdcb134b574e5a35824a6ff5eebad50bb6"
 
 [[package]]
 name = "vb-app"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "arboard",
  "base64 0.22.1",
@@ -3666,7 +3666,7 @@ dependencies = [
 
 [[package]]
 name = "vb-audio"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -3676,7 +3676,7 @@ dependencies = [
 
 [[package]]
 name = "vb-core"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "aes-gcm",
  "base64 0.22.1",

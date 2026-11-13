@@ -23,6 +23,9 @@ pub const MAX_CHUNK: usize = 3000;
 const PARTIAL_TTL: Duration = Duration::from_secs(60);
 const READ_TIMEOUT: Duration = Duration::from_secs(90);
 const MARKER_TIMEOUT: Duration = Duration::from_secs(8);
+const POST_TIMEOUT: Duration = Duration::from_secs(8);
+const LOCK_WAIT: Duration = Duration::from_secs(5);
+const PUBLISH_BUDGET: Duration = Duration::from_secs(15);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum State {
@@ -32,10 +35,12 @@ pub enum State {
     Live,
     /// O último participante encerrou a sala: o código não vale mais.
     Closed,
+    /// O relay está recusando as nossas mensagens (limite de requisições): só serve para avisar o usuário.
+    Limited,
 }
 impl State {
     pub fn as_str(self) -> &'static str {
-        match self { State::Online => "online", State::Offline => "offline", State::Live => "live", State::Closed => "closed" }
+        match self { State::Online => "online", State::Offline => "offline", State::Live => "live", State::Closed => "closed", State::Limited => "limited" }
     }
 }
 
@@ -132,8 +137,14 @@ impl Inbox {
             return None;
         }
         if self.skipping {
-            // histórico anterior à minha entrada, mas vejo se a sala já foi encerrada
-            if t == Some("closed") { self.saw_closed = true; }
+            // histórico anterior à minha entrada: vejo se a sala já foi encerrada. Mas um `closed` pode ser um engano de quem
+            // chegou, não viu ninguém e saiu: se DEPOIS dele alguém voltou a dar sinal de vida (hello, hb, desc…), a sala vive.
+            match t {
+                Some("closed") => self.saw_closed = true,
+                Some("bye") | None => {}
+                Some(_) if r != Some(self.role.as_str()) => self.saw_closed = false,
+                Some(_) => {}
+            }
             return None;
         }
         if !obj.is_object() || r == Some(self.role.as_str()) { return None; } // ignora o próprio eco
@@ -199,6 +210,7 @@ pub struct Relay {
     stop: Notify,
     marker_failed: Notify,
     publish_lock: Mutex<()>,
+    last_notice: std::sync::atomic::AtomicU64,
     tx: mpsc::UnboundedSender<Event>,
 }
 
@@ -226,6 +238,7 @@ impl Relay {
             stop: Notify::new(),
             marker_failed: Notify::new(),
             publish_lock: Mutex::new(()),
+            last_notice: std::sync::atomic::AtomicU64::new(0),
             tx,
         });
         let inbox = Inbox::new(keys, &cfg.role, cfg.skip_history);
@@ -245,6 +258,7 @@ impl Relay {
             stop: Notify::new(),
             marker_failed: Notify::new(),
             publish_lock: Mutex::new(()),
+            last_notice: std::sync::atomic::AtomicU64::new(0),
             tx,
         })
     }
@@ -265,37 +279,59 @@ impl Relay {
         }
     }
 
+    /// Uma requisição POST, com prazo. Sem prazo, uma conexão que "pendura" (relay lento, rede caindo) prendia o envio
+    /// para sempre e todas as mensagens seguintes ficavam na fila atrás dela.
     async fn post(&self, text: String) -> Result<(), RelayError> {
         let mut last = RelayError::Closed;
-        for attempt in 0..3u32 {
-            let res = self.http.post(format!("{}/{}", self.base, self.keys.topic)).header("Content-Type", "text/plain; charset=utf-8").body(text.clone()).send().await;
+        for attempt in 0..2u32 {
+            let res = self.http.post(format!("{}/{}", self.base, self.keys.topic)).header("Content-Type", "text/plain; charset=utf-8").timeout(POST_TIMEOUT).body(text.clone()).send().await;
             match res {
                 Ok(r) if r.status().is_success() => return Ok(()),
                 Ok(r) => {
                     let code = r.status().as_u16();
                     last = RelayError::Http(code);
                     let wait = if code == 429 {
-                        r.headers().get("retry-after").and_then(|v| v.to_str().ok()).and_then(|v| v.parse::<u64>().ok()).unwrap_or(2).min(10) * 1000
-                    } else if code >= 500 { 300 * 2u64.pow(attempt) } else { return Err(last) }; // 4xx (exceto 429) não adianta repetir
-                    if attempt < 2 { tokio::time::sleep(Duration::from_millis(wait)).await; }
+                        r.headers().get("retry-after").and_then(|v| v.to_str().ok()).and_then(|v| v.parse::<u64>().ok()).unwrap_or(2).min(3) * 1000
+                    } else if code >= 500 { 400 } else { return Err(last) }; // 4xx (exceto 429) não adianta repetir
+                    if attempt < 1 { tokio::time::sleep(Duration::from_millis(wait)).await; }
                 }
                 Err(e) => {
-                    last = RelayError::Net(e.to_string());
-                    if attempt < 2 { tokio::time::sleep(Duration::from_millis(300 * 2u64.pow(attempt))).await; }
+                    last = RelayError::Net(if e.is_timeout() { "o relay não respondeu a tempo".into() } else { e.to_string() });
+                    if attempt < 1 { tokio::time::sleep(Duration::from_millis(400)).await; }
                 }
             }
         }
         Err(last)
     }
 
-    pub async fn publish(&self, mut obj: Value) -> Result<(), RelayError> {
+    /// Avisa a interface (no máximo 1x a cada 30 s) que o relay está recusando/não respondendo às nossas mensagens.
+    fn notice(&self, e: &RelayError) {
+        if matches!(e, RelayError::Closed) { return; }
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+        if now.saturating_sub(self.last_notice.load(Ordering::Relaxed)) < 30 { return; }
+        self.last_notice.store(now, Ordering::Relaxed);
+        let _ = self.tx.send(Event::Status { state: State::Limited, error: Some(e.to_string()) });
+    }
+
+    /// Envia uma mensagem. Nunca demora mais que `PUBLISH_BUDGET`, aconteça o que acontecer com o relay.
+    pub async fn publish(&self, obj: Value) -> Result<(), RelayError> {
+        let r = match tokio::time::timeout(PUBLISH_BUDGET, self.publish_inner(obj)).await {
+            Ok(r) => r,
+            Err(_) => Err(RelayError::Net("tempo esgotado ao enviar".into())),
+        };
+        if let Err(e) = &r { self.notice(e); }
+        r
+    }
+
+    async fn publish_inner(&self, mut obj: Value) -> Result<(), RelayError> {
         if self.is_closed() { return Err(RelayError::Closed); }
         if let Some(o) = obj.as_object_mut() {
             o.insert("r".into(), json!(self.role));
             o.insert("ts".into(), json!(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)));
         }
         let sealed = self.keys.seal(&obj);
-        let _order = self.publish_lock.lock().await; // os pedaços de uma mensagem não se misturam com os de outra
+        // os pedaços de uma mensagem não se misturam com os de outra; mas não espero a fila para sempre
+        let _order = tokio::time::timeout(LOCK_WAIT, self.publish_lock.lock()).await.map_err(|_| RelayError::Net("fila de envio ocupada".into()))?;
         if sealed.len() + 2 <= MAX_CHUNK {
             return self.post(format!("1|{sealed}")).await;
         }
@@ -483,6 +519,45 @@ mod tests {
         ib.handle_text(&wire(&k, json!({"t":"closed","r":"antigo"})), now());
         assert!(ib.saw_closed());
         assert_eq!(ib.handle_text(&wire(&k, json!({"t":"_m","n": marker, "r":"eu"})), now()), Some(InboxOut::GoLive { closed: true }));
+    }
+
+    #[test]
+    fn a_closed_followed_by_activity_does_not_poison_the_room() {
+        // `closed` enganado (quem chegou, não viu ninguém e saiu) e DEPOIS o dono dá sinal de vida: a sala vive
+        for alive in ["hello", "hb", "desc", "status"] {
+            let k = keys();
+            let mut ib = Inbox::new(k.clone(), "eu", true);
+            let marker = ib.marker().unwrap().to_string();
+            ib.handle_text(&wire(&k, json!({"t":"closed","r":"visitante"})), now());
+            assert!(ib.saw_closed());
+            ib.handle_text(&wire(&k, json!({"t": alive, "r":"dono"})), now());
+            assert!(!ib.saw_closed(), "{alive}");
+            assert_eq!(ib.handle_text(&wire(&k, json!({"t":"_m","n": marker,"r":"eu"})), now()), Some(InboxOut::GoLive { closed: false }));
+        }
+    }
+
+    #[test]
+    fn closed_stays_closed_if_only_departures_follow_or_activity_came_before() {
+        let k = keys();
+        let mut ib = Inbox::new(k.clone(), "eu", true);
+        ib.handle_text(&wire(&k, json!({"t":"hello","r":"dono"})), now());
+        ib.handle_text(&wire(&k, json!({"t":"closed","r":"dono"})), now());
+        ib.handle_text(&wire(&k, json!({"t":"bye","r":"outro"})), now());
+        assert!(ib.saw_closed(), "atividade ANTES do closed e só despedidas depois: a sala acabou");
+    }
+
+    #[test]
+    fn my_own_old_messages_do_not_revive_a_closed_room() {
+        let k = keys();
+        let mut ib = Inbox::new(k.clone(), "eu", true);
+        ib.handle_text(&wire(&k, json!({"t":"closed","r":"dono"})), now());
+        ib.handle_text(&wire(&k, json!({"t":"hello","r":"eu"})), now());
+        assert!(ib.saw_closed());
+    }
+
+    #[test]
+    fn limited_state_has_its_own_wire_name() {
+        assert_eq!(State::Limited.as_str(), "limited");
     }
 
     #[test]

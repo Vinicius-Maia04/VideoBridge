@@ -13,7 +13,7 @@ const ID_RE = /^[A-Za-z0-9_-]{6,32}$/;
 const RETRY_DELAYS = window.VB_RETRY_DELAYS || [0, 500, 1500]; // tentativas de capturar o áudio do sistema (espaçadas: o erro é intermitente)
 const JOIN_WAIT_MS = window.VB_JOIN_WAIT_MS || 8000;           // quanto esperar alguém responder ao entrar com um código
 const S = {
-  cfg: null, myId: '', name: '', room: null, sigState: '', helloSent: false, preset: 'balanced', created: false, joinTimer: null, lastAlone: null,
+  cfg: null, myId: '', name: '', room: null, sigState: '', helloSent: false, preset: 'balanced', created: false, joinTimer: null, lastAlone: null, everHadPeers: false, hbWanted: false,
   peers: new Map(), gone: new Set(), local: [], tiles: new Map(), vol: new Map(), focusKey: null,
   micItem: null, micMuted: false, micGainNode: null, deafened: false, sysBusy: false, sfxCtx: null,
   sharedTurn: [], apps: [], appStatus: null, nativeError: '', mixerTimer: null, mixerSig: '', meters: new Map(), appNotes: {},
@@ -436,14 +436,20 @@ function mySources() {
 }
 /** Batimento: a cada 60 s (ou quando minhas fontes mudam) aviso o relay que continuo aqui. Quem vigia o aviso do Discord
  *  (o app do dono, depois que ele sai) usa isso para saber quem ainda está na sala e o que cada um compartilha. */
+function sendAlive() {
+  if (machine.state !== 'IN_ROOM' || !S.helloSent) return;
+  S.hbAt = Date.now(); S.hbSig = JSON.stringify(mySources());
+  sigSend({ t: 'hb', name: S.name, src: mySources() });
+}
 function startHeartbeat() {
   clearInterval(S.hbTimer); S.hbSig = ''; S.hbAt = Date.now();
   S.hbTimer = setInterval(() => {
-    if (machine.state !== 'IN_ROOM') return;
-    const src = mySources(), sig = JSON.stringify(src), now = Date.now();
-    if (sig === S.hbSig && now - S.hbAt < 60000) return;
-    S.hbSig = sig; S.hbAt = now; sigSend({ t: 'hb', name: S.name, src });
-  }, 20000);
+    // só manda batimento se o dono da sala avisou (`g` no hello) que vigia o aviso do Discord: cada mensagem conta no limite do relay
+    if (machine.state !== 'IN_ROOM' || !S.hbWanted || S.dcOwner) return;
+    const sig = JSON.stringify(mySources());
+    if (sig === S.hbSig && Date.now() - S.hbAt < 120000) return;
+    sendAlive();
+  }, 30000);
 }
 /** O aviso lista as fontes de TODOS na sala (as minhas e as que os outros anunciaram em `meta`). */
 function discordMessage() {
@@ -497,7 +503,7 @@ const sendHello = (to) => {
     }, JOIN_WAIT_MS);
   }
   const turn = S.cfg.shareTurn !== false ? V.sanitizeTurn(S.cfg.turn) : [];
-  return sigSend({ t: 'hello', name: S.name, muted: isMuted(), ...(turn.length ? { turn } : {}), ...(to ? { to } : {}) });
+  return sigSend({ t: 'hello', name: S.name, muted: isMuted(), ...(S.dcOwner && S.cfg.discord && S.cfg.discord.announce ? { g: true } : {}), ...(turn.length ? { turn } : {}), ...(to ? { to } : {}) });
 };
 const broadcastStatus = () => { if (machine.state === 'IN_ROOM' && S.helloSent) sigSend({ t: 'status', muted: isMuted() }); };
 
@@ -505,7 +511,7 @@ function ensurePeer(id, name) {
   let p = S.peers.get(id);
   if (p) { if (name) p.name = name; return p; }
   p = { id, name: name || 'Participante', polite: S.myId > id, making: false, queue: Promise.resolve(), pc: null, state: 'conectando…', meta: [], muted: true, senders: new Map(), quality: { height: S.cfg.resolution, fps: S.cfg.fps }, last: null, lossBad: 0, lossGood: 0, info: '' };
-  S.peers.set(id, p);
+  S.peers.set(id, p); S.everHadPeers = true;
   createPc(p); render();
   return p;
 }
@@ -613,6 +619,7 @@ function onSigMessage(m) {
   try {
     if (m.t === 'hello') {
       const shared = V.sanitizeTurn(m.turn); if (shared.length) S.sharedTurn = shared; // o TURN de quem já está na sala vale para as próximas conexões
+      if (m.g) S.hbWanted = true; // o dono do convite vigia a sala: preciso mandar batimento
       const known = S.peers.has(m.r);
       const max = (S.cfg.signaling && S.cfg.signaling.maxParticipants) || 6;
       if (!known && S.peers.size >= max - 1) return void sigSend({ t: 'full', to: m.r, reason: `A sala está lotada (${max} participantes).` });
@@ -625,7 +632,11 @@ function onSigMessage(m) {
     else if (m.t === 'dc_handoff') { onDiscordHandoff(m); }
     else if (m.t === 'dc_adopted') { S.dcAdopted = true; }
     else if (m.t === 'full') { leaveRoom(String(m.reason || 'A sala está lotada.'), { silent: true }); }
-    else if (m.t === 'closed') { S.gone.add(m.r); const p = S.peers.get(m.r); if (p) removePeer(p); if (S.peers.size === 0) leaveRoom('A sala foi encerrada.', { silent: true }); }
+    else if (m.t === 'closed') {
+      // "fui o último a sair", do ponto de vista dele. Se eu ainda estou aqui, ele não tinha me visto: a sala NÃO acabou.
+      // Só o removo e mostro que estou aqui (sem isso, a mensagem fica no histórico e quem chegar depois acharia a sala encerrada).
+      S.gone.add(m.r); const p = S.peers.get(m.r); if (p) removePeer(p); sendAlive();
+    }
     else if (m.t === 'desc') {
       const p = ensurePeer(m.r);
       p.queue = p.queue.then(() => handleDesc(p, m)).catch((e) => vb.log('error', 'Desc handling failed', { error: e.message }));
@@ -834,7 +845,7 @@ async function joinRoom(codeText) {
   machine.to('JOINING'); lobbySay('Conectando…', 'mut');
   try {
     S.cfg = await vb.setConfig({ ...uiToCfg(), hostName: name });
-    S.myId = randId(); S.helloSent = false; S.sigState = ''; S.created = !codeText; S.dcOwner = !codeText; S.discordLast = ''; S.richLast = ''; S.dcAdopted = false; S.lastAlone = null;
+    S.myId = randId(); S.helloSent = false; S.sigState = ''; S.created = !codeText; S.dcOwner = !codeText; S.discordLast = ''; S.richLast = ''; S.dcAdopted = false; S.lastAlone = null; S.everHadPeers = false; S.hbWanted = false;
     S.room = await vb.sigOpen(codeText || null, S.myId);
     machine.to('IN_ROOM'); lobbySay('', 'mut');
     if (S.sigState === 'closed') { await leaveRoom(CLOSED_MSG, { silent: true }); return; } // o código é de uma sala já encerrada
@@ -847,34 +858,30 @@ async function joinRoom(codeText) {
     vb.log('info', 'Joined room', { created: !codeText });
   } catch (e) {
     lobbySay(e.message, 'err'); vb.log('error', 'Join failed', { error: e.message });
-    await vb.sigClose().catch(() => {}); machine.to('LOBBY');
+    vb.sigClose({ silent: true }).catch(() => {}); machine.to('LOBBY');
   }
 }
-/** silent: não anuncia saída (nunca chegou a entrar de fato) nem toca o som de saída. */
+/** Passa o aviso do Discord a quem tiver o mesmo webhook (até ~2,5 s). */
+async function handoffDiscord() {
+  S.dcAdopted = false;
+  const info = await vb.discordHandoffInfo().catch(() => null);
+  if (!info) return;
+  try { await vb.sigSend({ t: 'dc_handoff', ...info }); } catch { /* relay fora do ar */ }
+  for (let i = 0; i < 25 && !S.dcAdopted; i++) await sleep(100);
+  if (S.dcAdopted) { await vb.discordRelease().catch(() => {}); S.discordOn = false; }
+}
+/** silent: não anuncia saída (nunca chegou a entrar de fato) nem toca o som de saída.
+ *  Sair NUNCA espera a rede: a despedida (bye/closed) e a remoção do aviso do Discord seguem em segundo plano. */
 async function leaveRoom(reason, opts = {}) {
   if (machine.state !== 'IN_ROOM') return;
   machine.to('LEAVING'); clearInterval(S.statsTimer); clearInterval(S.hbTimer); clearTimeout(S.joinTimer); S.joinTimer = null;
-  if (!opts.silent && S.dcOwner && S.discordOn && S.peers.size > 0) {
-    // Sou o dono do convite e a sala continua: tento passar a mensagem a quem tiver o mesmo webhook (até 2,5 s).
-    S.dcAdopted = false;
-    const info = await vb.discordHandoffInfo().catch(() => null);
-    if (info) {
-      try { await vb.sigSend({ t: 'dc_handoff', ...info }); } catch { /* relay fora do ar */ }
-      for (let i = 0; i < 25 && !S.dcAdopted; i++) await sleep(100);
-      if (S.dcAdopted) { await vb.discordRelease().catch(() => {}); S.discordOn = false; }
-    }
-  }
-  if (!opts.silent) {
-    // O último a sair ENCERRA a sala (`closed`): o código deixa de funcionar para quem tentar entrar depois.
-    const alone = S.peers.size === 0;
-    try { await vb.sigSend({ t: alone ? 'closed' : 'bye' }); } catch { /* relay fora do ar */ }
-    sound('leave');
-  }
-  await vb.sigClose().catch(() => {});
+  if (!opts.silent && S.dcOwner && S.discordOn && S.peers.size > 0) await Promise.race([handoffDiscord(), sleep(3000)]);
+  if (!opts.silent) sound('leave');
+  vb.sigClose({ silent: !!opts.silent }).catch(() => {}); // o processo principal envia a despedida (último a sair = closed; senão bye)
   S.peers.forEach((p) => { try { p.pc.close(); } catch { /* ok */ } }); S.peers.clear();
   [...S.local].forEach(stopItem); S.local = []; S.micItem = null; S.micGainNode = null; S.micMuted = false;
   [...S.tiles.keys()].forEach(removeTile);
-  await vb.discordEnd().catch(() => {}); S.discordOn = false; S.dcOwner = false; S.discordLast = ''; S.richLast = ''; vb.richClear().catch(() => {});
+  vb.discordEnd().catch(() => {}); S.discordOn = false; S.dcOwner = false; S.discordLast = ''; S.richLast = ''; vb.richClear().catch(() => {});
   S.room = null; S.helloSent = false; S.focusKey = null; S.lastAlone = null; S.gone.clear(); S.sharedTurn = []; syncShareState(); say('', 'mut');
   machine.to('LOBBY'); if (reason) lobbySay(reason, 'warn');
   vb.log('info', 'Left room; engine released');
@@ -1029,7 +1036,9 @@ function render() {
   };
   box.append(row(S.name, true, isMuted(), S.local.map((i) => i.kind), ''));
   [...S.peers.values()].sort((a, b) => a.name.localeCompare(b.name)).forEach((p) => box.append(row(p.name, false, p.muted, p.meta.map((m) => m.kind), p.state === 'conectado' ? '' : p.state, p)));
-  const alone = S.peers.size === 0; // informa o processo principal: se a janela fechar sozinha na sala, a sala é encerrada
+  // informa o processo principal: se a janela fechar com a sala vazia, a sala é encerrada. Só conta como "último a sair" quem
+  // criou a sala ou já chegou a ver alguém nela: quem entrou e nunca conectou com ninguém NÃO pode declarar a sala encerrada.
+  const alone = S.peers.size === 0 && (S.created || S.everHadPeers);
   if (alone !== S.lastAlone) { S.lastAlone = alone; vb.setAlone(alone); }
   renderStage(); renderStatus();
 }
@@ -1091,6 +1100,7 @@ $('#bitrate').addEventListener('change', () => { $('#bitrateCustom').classList.t
 $('#micGain').addEventListener('input', () => { S.cfg.mic.gain = Number($('#micGain').value); if (S.micGainNode && !S.micMuted) S.micGainNode.gain.value = S.cfg.mic.gain; });
 vb.onSigMessage(onSigMessage);
 vb.onSigStatus((st) => {
+  if (st && st.state === 'limited') { say(`O relay de sinalização está recusando mensagens (${st.error || 'limite atingido'}). Espere alguns minutos ou troque o relay em ⋮ Configurações.`, 'err'); return; }
   S.sigState = st && st.state;
   if (S.sigState === 'closed' && machine.state === 'IN_ROOM') { leaveRoom(CLOSED_MSG, { silent: true }); return; }
   if (S.sigState === 'live' && machine.state === 'IN_ROOM' && !S.helloSent) sendHello();
@@ -1098,6 +1108,7 @@ vb.onSigStatus((st) => {
 });
 vb.onInvite((code) => {
   if (machine.state === 'LOBBY') { $('#codeIn').value = code; joinRoom(code); }
+  else if (S.room && S.room.code && String(code).includes(S.room.code)) say('Você já está nessa sala.', 'mut');
   else say('Saia da sala atual antes de entrar em outra.', 'warn');
 });
 vb.onUpdate((u) => say(`Nova versão ${u.tag} disponível — clique com o botão direito no ícone da bandeja e escolha "Nova versão… baixar".`, 'mut'));

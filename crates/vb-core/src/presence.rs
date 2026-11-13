@@ -6,8 +6,8 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 /// Sem nenhuma mensagem de um participante por este tempo, ele é dado como saído (cai da rede, fecha à força).
-/// Os participantes mandam um `hb` (batimento) a cada ≤60 s.
-pub const TTL: Duration = Duration::from_secs(150);
+/// Quando o dono vigia o aviso do Discord (`g` no hello), os participantes mandam um `hb` (batimento) a cada 2 min.
+pub const TTL: Duration = Duration::from_secs(330);
 
 #[derive(Debug, Clone)]
 struct Member {

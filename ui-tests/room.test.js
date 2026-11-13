@@ -263,11 +263,11 @@ test('Discord: quem tem o mesmo webhook assume quando o dono sai (e avisa a sala
   assert.ok(t.calls.some((c) => c[0] === 'discordAdopt' && c[1].messageId === '987654321098765432'));
   assert.equal(t.sent('dc_adopted').length, 1, 'avisa a sala que assumiu');
 });
-test('sair: avisa (bye), fecha o relay, solta as fontes e volta ao lobby', async () => {
+test('sair: pede o fechamento do relay (que envia a despedida), solta as fontes e volta ao lobby', async () => {
   const t = boot(); await t.enter(); t.msg({ t: 'hello', r: LOW, name: 'Ana' }); await t.tick(4); await t.shareFirstSource();
   const tracks = t.pcs[0].senders.map((s) => s.track);
   t.$('#btnLeave').click(); await t.tick(10);
-  assert.equal(t.sent('bye').length, 1); assert.equal(t.sent('closed').length, 0, 'não era o último: só "bye"'); assert.ok(t.calls.some((c) => c[0] === 'sigClose')); assert.ok(t.pcs[0].closed); assert.ok(tracks.every((x) => x.stopped));
+  assert.equal(t.calls.filter((c) => c[0] === 'sigClose').length, 1); assert.equal(t.calls.find((c) => c[0] === 'sigClose')[1].silent, false); assert.ok(t.pcs[0].closed); assert.ok(tracks.every((x) => x.stopped));
   assert.equal(t.$('#lobby').classList.contains('hidden'), false); assert.equal(t.$('#tiles').children.length, 0);
   t.$('#btnCreate').click(); await t.tick(6); assert.equal(t.calls.filter((c) => c[0] === 'sigOpen').length, 2, 'dá para criar outra sala');
 });

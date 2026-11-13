@@ -181,7 +181,9 @@ impl Shared {
         let (secret, relay_url) = match code {
             Some(c) => {
                 let p = room::parse_code(c).map_err(|e| e.to_string())?;
-                (p.secret, p.relay.unwrap_or(cfg.signaling.relay.clone()))
+                // código SEM relay = relay padrão (é assim que `make_code` o escreve); usar o relay configurado AQUI faria quem
+                // tem outro relay nas configurações cair numa sala "diferente", mesmo com o código certo
+                (p.secret, p.relay.unwrap_or_else(|| room::DEFAULT_RELAY.to_string()))
             }
             None => (room::new_secret(), cfg.signaling.relay.clone()),
         };
@@ -319,8 +321,11 @@ impl Shared {
                 Ok(json!(true))
             }
             "sig:close" => {
-                // saí da sala: se ainda há gente, o vigia mantém o aviso; senão apaga agora
-                if !self.close_session(false, true) { self.end_discord().await; }
+                // Responde NA HORA: sair da sala nunca espera a rede. A despedida (bye/closed), o vigia do Discord e a remoção
+                // do aviso rodam em segundo plano. `silent` = nunca cheguei a entrar de fato (não se despede).
+                let silent = a0["silent"].as_bool().unwrap_or(false);
+                let me = self.clone();
+                tokio::spawn(async move { if !me.close_session(!silent, true) { me.end_discord().await; } });
                 Ok(json!(true))
             }
             "sig:selfTest" => Ok(serde_json::to_value(relay::self_test(&self.config().signaling.relay).await).map_err(|e| e.to_string())?),

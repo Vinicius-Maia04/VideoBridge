@@ -123,10 +123,11 @@ async fn session(pipe: tokio::net::windows::named_pipe::NamedPipeClient, rx: &mu
                             if wr.write_all(&out).await.is_err() { break true; }
                         }
                         Incoming::Join(secret) => {
-                            if rpc::join_secret_ok(&secret) { on_join(secret); } else { log("warn", "Discord join secret rejected"); }
+                            if rpc::join_secret_ok(&secret) { log("info", "Discord join received (opening room)"); on_join(secret); } else { log("warn", "Discord join secret rejected"); }
                         }
                         // quem não está no canal de voz (e só pede para entrar) não entra: recusa
                         Incoming::JoinRequest(user) => {
+                            log("info", "Discord join request received; rejecting (only direct joins are allowed)");
                             if wr.write_all(&rpc::encode_frame(rpc::OP_FRAME, &rpc::reject_request(&user, &nonce()))).await.is_err() { break true; }
                         }
                         Incoming::Error { code, message } => log("warn", &format!("Discord IPC error {code}: {message}")),

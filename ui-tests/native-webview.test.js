@@ -114,3 +114,33 @@ test('a opção do Rich Presence faz parte da configuração salva (não se perd
   t.$('#dcPresence').checked = false; t.$('#btnSave').click(); await t.tick(10);
   assert.equal(t.calls.filter((c) => c[0] === 'setConfig').pop()[1].discord.presence, false);
 });
+
+// ---- sair e entrar nunca ficam presos na rede ----
+const never = () => new Promise(() => {});
+test('sair volta ao lobby NA HORA mesmo se o relay/Discord/RPC não respondem nunca', async () => {
+  const t = boot({ vbOverrides: { sigClose: never, discordEnd: never, richClear: never, sigSend: never } }); await t.enter(); await t.tick(4);
+  t.$('#btnLeave').click(); await t.tick(10);
+  assert.equal(t.$('#lobby').classList.contains('hidden'), false, 'voltou ao lobby sem esperar a rede');
+  t.$('#btnCreate').click(); await t.tick(6);
+  assert.equal(t.calls.filter((c) => c[0] === 'sigOpen').length, 2, 'e dá para criar/entrar de novo');
+});
+test('o dono com o aviso do Discord ligado também sai sem travar se o webhook não responde', async () => {
+  const cfg = boot().config; cfg.discord = { announce: true, webhookUrl: 'https://hook', joinPageUrl: '', presence: true };
+  const t = boot({ cfg, vbOverrides: { discordAnnounce: async () => 'm', discordUpdate: async () => true, discordHandoffInfo: never, discordEnd: never } });
+  await t.enter(); await t.tick(6); t.msg({ t: 'hello', r: 'aaaaaaaaaa', name: 'Ana' }); await t.tick(6);
+  t.$('#btnLeave').click(); await new Promise((r) => setTimeout(r, 3300)); await t.tick(10);
+  assert.equal(t.$('#lobby').classList.contains('hidden'), false, 'no máximo ~3 s esperando a passagem do aviso');
+});
+test('relay recusando mensagens (limite) avisa o usuário em vez de ficar mudo', async () => {
+  const t = boot(); await t.enter(); await t.tick(4);
+  t.handlers.onSigStatus({ state: 'limited', error: 'Relay respondeu HTTP 429' }); await t.tick(4);
+  assert.match(t.$('#msg').textContent, /recusando mensagens/);
+  assert.equal(t.$('#roomView').classList.contains('hidden'), false, 'não derruba a sala');
+});
+test('convite do Rich Presence para a sala em que já estou não reclama de "outra sala"', async () => {
+  const t = boot({ vbOverrides: { sigOpen: async () => ({ code: 'VB3.AAAAAAAAAAAAAAAAAAAAAA', joinUrl: '' }) } }); await t.enter(); await t.tick(4);
+  t.handlers.onInvite('VB3.AAAAAAAAAAAAAAAAAAAAAA'); await t.tick(3);
+  assert.match(t.$('#msg').textContent, /já está nessa sala/);
+  t.handlers.onInvite('VB3.BBBBBBBBBBBBBBBBBBBBBB'); await t.tick(3);
+  assert.match(t.$('#msg').textContent, /Saia da sala atual/);
+});
