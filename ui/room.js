@@ -13,7 +13,7 @@ const ID_RE = /^[A-Za-z0-9_-]{6,32}$/;
 const RETRY_DELAYS = window.VB_RETRY_DELAYS || [0, 500, 1500]; // tentativas de capturar o áudio do sistema (espaçadas: o erro é intermitente)
 const JOIN_WAIT_MS = window.VB_JOIN_WAIT_MS || 8000;           // quanto esperar alguém responder ao entrar com um código
 const S = {
-  cfg: null, myId: '', name: '', room: null, sigState: '', helloSent: false, preset: 'balanced', created: false, joinTimer: null, lastAlone: null, everHadPeers: false, hbWanted: false,
+  cfg: null, myId: '', name: '', room: null, sigState: '', helloSent: false, preset: 'balanced', created: false, joinTimer: null, lastAlone: null, everHadPeers: false, hbWanted: false, admins: new Set(), ownerId: null, rolesKnown: false, locked: false, forcedMute: false,
   peers: new Map(), gone: new Set(), local: [], tiles: new Map(), vol: new Map(), focusKey: null,
   micItem: null, micMuted: false, micGainNode: null, deafened: false, sysBusy: false, sfxCtx: null,
   sharedTurn: [], apps: [], appStatus: null, nativeError: '', mixerTimer: null, mixerSig: '', meters: new Map(), appNotes: {},
@@ -360,6 +360,7 @@ async function toggleCamera() {
 }
 async function toggleMic() {
   if (machine.state !== 'IN_ROOM') return;
+  if (S.forcedMute) return void say('Seu microfone foi silenciado por um admin.', 'warn');
   if (!S.micItem) { // primeira vez: só agora pede permissão (item 36)
     try {
       const raw = await userMedia('audio', S.cfg.mic.deviceId);
@@ -503,7 +504,7 @@ const sendHello = (to) => {
     }, JOIN_WAIT_MS);
   }
   const turn = S.cfg.shareTurn !== false ? V.sanitizeTurn(S.cfg.turn) : [];
-  return sigSend({ t: 'hello', name: S.name, muted: isMuted(), ...(S.dcOwner && S.cfg.discord && S.cfg.discord.announce ? { g: true } : {}), ...(turn.length ? { turn } : {}), ...(to ? { to } : {}) });
+  return sigSend({ t: 'hello', name: S.name, muted: isMuted(), ...(S.dcOwner && S.cfg.discord && S.cfg.discord.announce ? { g: true } : {}), ...(S.rolesKnown ? { admins: [...S.admins], owner: S.ownerId, locked: S.locked } : {}), ...(turn.length ? { turn } : {}), ...(to ? { to } : {}) });
 };
 const broadcastStatus = () => { if (machine.state === 'IN_ROOM' && S.helloSent) sigSend({ t: 'status', muted: isMuted() }); };
 
@@ -531,7 +532,8 @@ function attachDc(p, dc) {
   dc.addEventListener('message', (e) => {
     if (typeof e.data !== 'string' || e.data.length > 200000) return;
     let m; try { m = JSON.parse(e.data); } catch { return; }
-    if (!m || m.t !== 'desc' || m.to !== S.myId) return; // pelo canal só passam descrições; o remetente é quem abriu o canal
+    if (m && m.t === 'adm') return void onAdminMsg(p, m); // comandos de admin: o remetente é a conexão por onde chegou
+    if (!m || m.t !== 'desc' || m.to !== S.myId) return; // descrições: o remetente é quem abriu o canal
     onSigMessage({ ...m, r: p.id });
   });
 }
@@ -604,11 +606,91 @@ function onPeerState(p) {
   else if (st === 'closed') { removePeer(p); return; }
   render();
 }
+// ---------- Admin da sala ----------
+// Não existe servidor central, então "admin" é um combinado entre os apps (não é segurança contra um app modificado). Os comandos
+// vão pelo canal de dados P2P (a conexão já identifica quem mandou) e só valem se o remetente é admin na minha visão da sala.
+const isAdmin = (id = S.myId) => S.rolesKnown && S.admins.has(id);
+const isOwner = (id) => !!id && S.ownerId === id;
+const validIds = (a) => (Array.isArray(a) ? a.filter((x) => typeof x === 'string' && ID_RE.test(x)).slice(0, 12) : []);
+/** Papéis vindos de outra pessoa: a 1ª lista que recebo (quando acabei de entrar) ou a de um admin conhecido. */
+function learnRoles(p, m) {
+  if (!Array.isArray(m.admins)) return;
+  if (S.rolesKnown && !S.admins.has(p.id)) return; // só admin muda papéis
+  let owner = typeof m.owner === 'string' && ID_RE.test(m.owner) ? m.owner : null;
+  if (S.rolesKnown && S.ownerId && owner !== S.ownerId && p.id !== S.ownerId && S.peers.has(S.ownerId) | (S.ownerId === S.myId)) owner = S.ownerId; // o dono não é rebaixado por outro admin
+  const ids = new Set(validIds(m.admins)); if (owner) ids.add(owner);
+  S.admins = ids; S.ownerId = owner; S.locked = !!m.locked; S.rolesKnown = true; render();
+}
+/** Quem saiu deixa de ser admin; sala sem nenhum admin presente: o menor ID assume (todos chegam ao mesmo resultado). */
+function adminAfterDeparture(id) {
+  if (!S.rolesKnown) return;
+  S.admins.delete(id); if (S.ownerId === id) S.ownerId = null;
+  if (S.admins.size === 0 && S.helloSent) { const heir = idsPresent().sort()[0]; S.admins.add(heir); if (heir === S.myId) say('Você agora é admin da sala.', 'mut'); }
+}
+const idsPresent = () => [S.myId, ...S.peers.keys()];
+function sendAdm(p, obj) {
+  try { if (p.dc && p.dc.readyState === 'open') { p.dc.send(JSON.stringify({ t: 'adm', ...obj })); return true; } } catch { /* cai no aviso abaixo */ }
+  return false;
+}
+function broadcastAdm(obj) { let n = 0; S.peers.forEach((p) => { if (sendAdm(p, obj)) n++; }); return n; }
+function broadcastRoles() { broadcastAdm({ cmd: 'roles', admins: [...S.admins], owner: S.ownerId, locked: S.locked }); render(); }
+const notReady = (p) => say(`A conexão com ${p.name} ainda não está pronta. Tente de novo em instantes.`, 'warn');
+function admMute(p, on) { if (!sendAdm(p, { cmd: on ? 'mute' : 'unmute' })) return notReady(p); p.fm = on; say(on ? `Você silenciou o microfone de ${p.name}.` : `Você liberou o microfone de ${p.name}.`, 'mut'); render(); }
+function admStopShare(p) { if (!sendAdm(p, { cmd: 'stopshare' })) return notReady(p); say(`Você pediu para ${p.name} parar de compartilhar.`, 'mut'); }
+function admPromote(p, on) {
+  if (!on && (isOwner(p.id) || !isOwner(S.myId))) return; // só o dono rebaixa admins
+  if (on) S.admins.add(p.id); else S.admins.delete(p.id);
+  broadcastRoles(); say(on ? `${p.name} agora é admin.` : `${p.name} deixou de ser admin.`, 'mut');
+}
+function admKick(p) {
+  if (!sendAdm(p, { cmd: 'kick', id: p.id })) return notReady(p);
+  broadcastAdm({ cmd: 'kick', id: p.id }); S.gone.add(p.id); removePeer(p); say(`Você removeu ${p.name} da sala.`, 'mut');
+}
+function admToggleLock() { S.locked = !S.locked; broadcastAdm({ cmd: 'lock', on: S.locked }); say(S.locked ? 'Sala trancada: ninguém novo entra.' : 'Sala destrancada.', 'mut'); render(); }
+/** Comando recebido pelo canal de dados do participante `p`. */
+function onAdminMsg(p, m) {
+  if (machine.state !== 'IN_ROOM' || typeof m.cmd !== 'string') return;
+  if (m.cmd === 'roles') return void learnRoles(p, m);
+  if (!isAdmin(p.id)) return; // só admin manda
+  // admin não age sobre o dono, nem sobre outro admin (só o dono faz isso)
+  const protectedFromSender = (id) => (isOwner(id) && p.id !== id) || (S.admins.has(id) && !isOwner(p.id) && p.id !== id);
+  if (m.cmd === 'mute' || m.cmd === 'unmute' || m.cmd === 'stopshare') {
+    if (protectedFromSender(S.myId)) return;
+    if (m.cmd === 'stopshare') { S.local.filter((i) => i.kind === 'screen' || i.kind === 'camera' || i.kind === 'sysaudio').forEach(removeLocal); say(`${p.name} encerrou a sua transmissão.`, 'warn'); return; }
+    S.forcedMute = m.cmd === 'mute';
+    if (S.forcedMute && S.micItem && !S.micMuted) { S.micMuted = true; S.micGainNode.gain.value = 0; broadcastStatus(); }
+    say(S.forcedMute ? `${p.name} silenciou o seu microfone.` : `${p.name} liberou o seu microfone.`, 'warn'); render();
+  } else if (m.cmd === 'kick' && typeof m.id === 'string' && ID_RE.test(m.id)) {
+    if (protectedFromSender(m.id)) return;
+    if (m.id === S.myId) return void leaveRoom(`Você foi removido da sala por ${p.name}.`);
+    const q = S.peers.get(m.id); S.gone.add(m.id); if (q) { removePeer(q); say(`${q.name} foi removido da sala por ${p.name}.`, 'mut'); }
+  } else if (m.cmd === 'lock') { S.locked = !!m.on; say(`${p.name} ${S.locked ? 'trancou' : 'destrancou'} a sala.`, 'mut'); render(); }
+}
+function closeAdminMenu() { const m = $('#adminMenu'); if (m) m.classList.add('hidden'); }
+function openAdminMenu(p, anchor) {
+  const menu = $('#adminMenu'); menu.textContent = '';
+  const item = (icon, text, fn, danger) => menu.append(el('button', { class: 'mi' + (danger ? ' danger' : ''), onclick: () => { closeAdminMenu(); fn(); } }, el('span', { class: 'ic i-' + icon }), text));
+  const targetAdmin = S.admins.has(p.id), canAct = !isOwner(p.id) && (!targetAdmin || isOwner(S.myId));
+  if (canAct) {
+    item('mic-off', p.fm ? 'Liberar microfone' : 'Silenciar microfone', () => admMute(p, !p.fm));
+    if (p.meta.some((x) => x.kind === 'screen' || x.kind === 'camera')) item('stop', 'Parar compartilhamento', () => admStopShare(p));
+  }
+  if (!isOwner(p.id) && (!targetAdmin || isOwner(S.myId))) item('shield', targetAdmin ? 'Remover admin' : 'Tornar admin', () => admPromote(p, !targetAdmin));
+  if (canAct) item('user-x', 'Expulsar da sala', () => admKick(p), true);
+  if (!menu.children.length) return;
+  menu.classList.remove('hidden');
+  if (anchor && anchor.getBoundingClientRect && menu.style) {
+    const r = anchor.getBoundingClientRect();
+    menu.style.top = Math.min(r.bottom + 4, window.innerHeight - menu.offsetHeight - 8) + 'px';
+    menu.style.left = Math.max(8, r.right - menu.offsetWidth) + 'px';
+  }
+}
+
 function removePeer(p) {
   sound('peerLeave');
   try { p.pc.close(); } catch { /* ok */ }
   for (const [key, t] of [...S.tiles]) if (t.ownerId === p.id) removeTile(key);
-  S.peers.delete(p.id); render();
+  S.peers.delete(p.id); adminAfterDeparture(p.id); render();
 }
 
 function onSigMessage(m) {
@@ -621,14 +703,16 @@ function onSigMessage(m) {
       const shared = V.sanitizeTurn(m.turn); if (shared.length) S.sharedTurn = shared; // o TURN de quem já está na sala vale para as próximas conexões
       if (m.g) S.hbWanted = true; // o dono do convite vigia a sala: preciso mandar batimento
       const known = S.peers.has(m.r);
+      if (!known && S.locked && S.rolesKnown) { if (isAdmin()) sigSend({ t: 'denied', to: m.r }); return; } // sala trancada: ninguém novo entra
       const max = (S.cfg.signaling && S.cfg.signaling.maxParticipants) || 6;
       if (!known && S.peers.size >= max - 1) return void sigSend({ t: 'full', to: m.r, reason: `A sala está lotada (${max} participantes).` });
-      const p = ensurePeer(m.r, String(m.name || 'Participante').slice(0, 40)); p.muted = !!m.muted;
+      const p = ensurePeer(m.r, String(m.name || 'Participante').slice(0, 40)); p.muted = !!m.muted; learnRoles(p, m);
       if (!known) sound('peerJoin');
       if (!known && !m.to) sendHello(m.r); // responde só a quem acabou de chegar (broadcast)
       render();
     } else if (m.t === 'status') { const p = S.peers.get(m.r); if (p) { p.muted = !!m.muted; render(); } }
     else if (m.t === 'bye') { S.gone.add(m.r); const p = S.peers.get(m.r); if (p) removePeer(p); }
+    else if (m.t === 'denied') { if (S.peers.size === 0 && !S.created) leaveRoom('Esta sala está trancada por um admin. Peça para destrancar e tente de novo.', { silent: true }); }
     else if (m.t === 'dc_handoff') { onDiscordHandoff(m); }
     else if (m.t === 'dc_adopted') { S.dcAdopted = true; }
     else if (m.t === 'full') { leaveRoom(String(m.reason || 'A sala está lotada.'), { silent: true }); }
@@ -845,7 +929,8 @@ async function joinRoom(codeText) {
   machine.to('JOINING'); lobbySay('Conectando…', 'mut');
   try {
     S.cfg = await vb.setConfig({ ...uiToCfg(), hostName: name });
-    S.myId = randId(); S.helloSent = false; S.sigState = ''; S.created = !codeText; S.dcOwner = !codeText; S.discordLast = ''; S.richLast = ''; S.dcAdopted = false; S.lastAlone = null; S.everHadPeers = false; S.hbWanted = false;
+    S.myId = randId(); S.helloSent = false; S.sigState = ''; S.admins = new Set(!codeText ? [S.myId] : []); S.ownerId = !codeText ? S.myId : null; S.rolesKnown = !codeText; S.locked = false; S.forcedMute = false;
+    S.created = !codeText; S.dcOwner = !codeText; S.discordLast = ''; S.richLast = ''; S.dcAdopted = false; S.lastAlone = null; S.everHadPeers = false; S.hbWanted = false;
     S.room = await vb.sigOpen(codeText || null, S.myId);
     machine.to('IN_ROOM'); lobbySay('', 'mut');
     if (S.sigState === 'closed') { await leaveRoom(CLOSED_MSG, { silent: true }); return; } // o código é de uma sala já encerrada
@@ -882,7 +967,7 @@ async function leaveRoom(reason, opts = {}) {
   [...S.local].forEach(stopItem); S.local = []; S.micItem = null; S.micGainNode = null; S.micMuted = false;
   [...S.tiles.keys()].forEach(removeTile);
   vb.discordEnd().catch(() => {}); S.discordOn = false; S.dcOwner = false; S.discordLast = ''; S.richLast = ''; vb.richClear().catch(() => {});
-  S.room = null; S.helloSent = false; S.focusKey = null; S.lastAlone = null; S.gone.clear(); S.sharedTurn = []; syncShareState(); say('', 'mut');
+  S.room = null; S.helloSent = false; S.focusKey = null; S.lastAlone = null; S.gone.clear(); S.admins = new Set(); S.ownerId = null; S.rolesKnown = false; S.locked = false; S.forcedMute = false; closeAdminMenu(); S.sharedTurn = []; syncShareState(); say('', 'mut');
   machine.to('LOBBY'); if (reason) lobbySay(reason, 'warn');
   vb.log('info', 'Left room; engine released');
 }
@@ -935,8 +1020,32 @@ let settingsSnap = '';
 const settingsOpen = () => !$('#settings').classList.contains('hidden');
 /** "Foto" do formulário: se mudou desde que abriu, há alterações não salvas. */
 const snapSettings = () => { try { return JSON.stringify(uiToCfg()) + '|' + $('#turnLines').value; } catch { return ''; } };
+const SET_TABS = ['geral', 'av', 'discord', 'rede'];
+function showSettingsTab(name) {
+  SET_TABS.forEach((n) => { $(`#tab-${n}`).classList.toggle('active', n === name); $(`#panel-${n}`).classList.toggle('hidden', n !== name); });
+}
+SET_TABS.forEach((n) => $(`#tab-${n}`).addEventListener('click', () => showSettingsTab(n)));
+/** Balão de ajuda dos "?": um só elemento, posicionado na tela (não fica cortado pela rolagem do cartão). */
+(function setupHelpTips() {
+  if (typeof document.addEventListener !== 'function') return;
+  const tip = $('#tip');
+  const target = (e) => (e && e.target && e.target.closest ? e.target.closest('.help') : null);
+  const show = (h) => {
+    tip.textContent = h.getAttribute('data-tip') || ''; tip.classList.remove('hidden');
+    const r = h.getBoundingClientRect(), w = tip.offsetWidth, ht = tip.offsetHeight;
+    let top = r.bottom + 8; if (top + ht > window.innerHeight - 8) top = Math.max(8, r.top - ht - 8);
+    tip.style.top = top + 'px'; tip.style.left = Math.min(Math.max(8, r.left + r.width / 2 - w / 2), window.innerWidth - w - 8) + 'px';
+  };
+  const hide = () => tip.classList.add('hidden');
+  document.addEventListener('mouseover', (e) => { const h = target(e); if (h) show(h); });
+  document.addEventListener('mouseout', (e) => { if (target(e)) hide(); });
+  document.addEventListener('focusin', (e) => { const h = target(e); if (h) show(h); });
+  document.addEventListener('focusout', (e) => { if (target(e)) hide(); });
+  // clicar no "?" não pode ligar/desligar o interruptor da linha
+  document.addEventListener('click', (e) => { if (target(e)) e.preventDefault(); }, true);
+})();
 async function openSettings() {
-  cfgToUi(S.cfg); await refreshDevices().catch(() => {}); $('#settingsMsg').textContent = '';
+  cfgToUi(S.cfg); await refreshDevices().catch(() => {}); $('#settingsMsg').textContent = ''; showSettingsTab('geral');
   settingsSnap = snapSettings(); $('#settings').classList.remove('hidden');
 }
 /** Pergunta (na própria página) o que fazer com as alterações: 'save' | 'discard' | 'keep'. */
@@ -1013,7 +1122,9 @@ function render() {
   $('#roomChip').textContent = S.room ? S.room.code.slice(0, 9) + '…' : '';
   $('#relayDot').className = 'dot ' + (S.sigState === 'live' || S.sigState === 'online' ? 'on' : S.sigState === 'offline' ? 'off' : '');
   $('#btnMic').classList.toggle('off', isMuted()); $('#btnMic').title = !S.micItem ? 'Ativar microfone' : S.micMuted ? 'Desmutar' : 'Mutar';
+  $('#btnMic').disabled = !!S.forcedMute; if (S.forcedMute) $('#btnMic').title = 'Silenciado por um admin';
   $('#btnDeaf').classList.toggle('off', S.deafened);
+  const lockBtn = $('#btnLock'); lockBtn.classList.toggle('hidden', !isAdmin()); lockBtn.classList.toggle('active', S.locked); lockBtn.title = S.locked ? 'Sala trancada: ninguém novo entra (clique para destrancar)' : 'Trancar a sala (ninguém novo entra)';
   const screens = S.local.filter((i) => i.kind === 'screen').length;
   $('#screenCount').textContent = screens ? `+ ${screens}` : '';
   $('#btnCam').classList.toggle('active', S.local.some((i) => i.kind === 'camera'));
@@ -1024,7 +1135,9 @@ function render() {
   $('#peopleCount').textContent = String(S.peers.size + 1);
   const box = $('#participants'); box.textContent = '';
   const row = (name, you, muted, kinds, state, peer) => {
+    const rid = you ? S.myId : peer && peer.id;
     const kids = [el('div', { class: 'avatar', text: (name[0] || '?').toUpperCase() }), el('span', { class: 'name', text: name + (you ? ' (você)' : '') + (state ? ` · ${state}` : '') })];
+    if (rid && S.rolesKnown && S.admins.has(rid)) kids.push(el('span', { class: 'ic role ' + (isOwner(rid) ? 'i-crown owner' : 'i-shield'), title: isOwner(rid) ? 'Dono da sala' : 'Admin' }));
     if (peer) { // volume do microfone dessa pessoa (só para mim)
       const v = volOf(peer.id), sl = el('input', { type: 'range', class: 'pvol', min: '0', max: '1', step: '0.05', title: `Volume do microfone de ${name}` });
       sl.value = String(v.mic); sl.addEventListener('input', () => { v.mic = Number(sl.value); v.micMuted = false; applyOwnerAudio(peer.id); });
@@ -1032,6 +1145,7 @@ function render() {
     }
     const icos = [kinds.includes('screen') && 'monitor', kinds.includes('camera') && 'camera', kinds.includes('sysaudio') && 'volume', muted ? 'mic-off' : 'mic'].filter(Boolean);
     kids.push(el('span', { class: 'ico' }, ...icos.map((n) => el('span', { class: 'ic i-' + n }))));
+    if (peer && isAdmin()) kids.push(el('button', { class: 'rowmenu', title: `Ações de admin sobre ${name}`, onclick: (e) => openAdminMenu(peer, e.currentTarget || e.target) }, el('span', { class: 'ic i-more' })));
     return el('div', { class: 'person' }, ...kids);
   };
   box.append(row(S.name, true, isMuted(), S.local.map((i) => i.kind), ''));
@@ -1056,6 +1170,8 @@ $('#codeIn').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#btn
 $('#lobbyName').addEventListener('input', () => { $('#myName').value = $('#lobbyName').value; });
 $('#btnLobbySettings').addEventListener('click', () => openSettings());
 $('#btnSettings').addEventListener('click', () => openSettings());
+$('#btnLock').addEventListener('click', () => admToggleLock());
+if (typeof document.addEventListener === 'function') document.addEventListener('click', (e) => { const m = $('#adminMenu'); if (m && !m.classList.contains('hidden') && !(e && e.target && e.target.closest && e.target.closest('.rowmenu,#adminMenu'))) closeAdminMenu(); });
 $('#btnCloseSettings').addEventListener('click', () => requestCloseSettings());
 onBackdrop($('#settings'), () => requestCloseSettings());
 onBackdrop($('#picker'), () => $('#picker').classList.add('hidden'));
@@ -1067,6 +1183,7 @@ if (typeof document.addEventListener === 'function') {
   document.addEventListener('keydown', (e) => {
     if (!e || e.key !== 'Escape') return;
     if (S.confirmResolve) S.confirmResolve('keep');
+    else if (!$('#adminMenu').classList.contains('hidden')) closeAdminMenu();
     else if (settingsOpen()) requestCloseSettings();
     else if (!$('#picker').classList.contains('hidden')) $('#picker').classList.add('hidden');
   });

@@ -15,7 +15,7 @@
 
 <div id="roomView" class="hidden">
   <header class="topbar">
-    <div class="left"><img class="mark" src="assets/logo.svg" alt=""><b>VideoBridge</b><span class="chip" id="roomChip" title="Código da sala"></span><span class="dot" id="relayDot" title="Relay de signaling"></span></div>
+    <div class="left"><img class="mark" src="assets/logo.svg" alt=""><b>VideoBridge</b><span class="chip selectable" id="roomChip" title="Código da sala"></span><span class="dot" id="relayDot" title="Relay de signaling"></span></div>
     <div class="controls">
       <button id="btnMic" class="cbtn off" title="Microfone"><span class="ic i-mic"></span></button>
       <button id="btnDeaf" class="cbtn" title="Ouvir os outros"><span class="ic i-headphones"></span></button>
@@ -53,7 +53,7 @@
   </div>
 
   <div class="layout">
-    <aside class="side"><h3><span>Participantes</span><span id="peopleCount" class="mut"></span></h3><div id="participants"></div></aside>
+    <aside class="side"><h3><span>Participantes</span><span class="sp"></span><button id="btnLock" class="iconbtn hidden" title="Trancar a sala"><span class="ic i-unlock"></span></button><span id="peopleCount" class="mut"></span></h3><div id="participants"></div></aside>
     <main class="stage">
       <div id="emptyStage"><div>Ninguém está transmitindo ainda.</div>
         <div class="row"><button id="btnScreen2" class="btn"><span class="ic i-monitor"></span>Compartilhar tela</button><button id="btnCam2" class="btn"><span class="ic i-camera"></span>Compartilhar câmera</button></div></div>
@@ -72,49 +72,25 @@
     <button id="pickerCancel" class="btn ghost">Cancelar</button><button id="pickerGo" class="btn">Compartilhar</button></div>
 </div></div>
 
+<div id="adminMenu" class="menu hidden"></div>
+
 <div id="confirmDlg" class="modal top hidden"><div class="box narrow">
   <h2>Alterações não salvas</h2>
   <div class="mut">Você mudou configurações e ainda não salvou. Deseja salvar antes de fechar?</div>
   <div class="row"><button id="cfmKeep" class="btn ghost">Continuar editando</button><span class="grow"></span><button id="cfmDiscard" class="btn ghost">Descartar</button><button id="cfmSave" class="btn">Salvar</button></div>
 </div></div>
 
-<div id="settings" class="modal hidden"><div class="box">
-  <h2>Configurações</h2>
-  <div class="fields">
-    <fieldset><legend>Geral</legend>
-      <label>Seu nome <input id="myName" type="text" maxlength="40" class="grow"></label>
-      <label>Máx. participantes <input id="maxParticipants" type="number" min="2" max="12" class="w90"></label>
-      <label><input type="checkbox" id="sfxOn"> Efeitos sonoros</label>
-      <label>Volume dos efeitos <input type="range" id="sfxVol" min="0" max="1" step="0.05" value="0.5"><button id="btnSfxTest" class="btn ghost">Testar</button></label>
-      <label><input type="checkbox" id="autostart"> Iniciar com o Windows</label>
-      <label><input type="checkbox" id="minimized"> Iniciar minimizado (só no início automático)</label></fieldset>
-    <fieldset><legend>Dispositivos</legend>
-      <label>Câmera <select id="camDev" class="grow"></select></label>
-      <label>Microfone <select id="micDev" class="grow"></select></label>
-      <label>Ganho do mic <input type="range" id="micGain" min="0" max="2" step="0.05" value="1"></label>
-      <label><input type="checkbox" id="sysAudio" checked> Compartilhar áudio do sistema junto com a tela</label>
-      <label><input type="checkbox" id="appAudioOn" checked> Áudio por aplicativo (Windows 10 2004+)</label>
-      <label>Áudio do sistema (alternativa) <select id="sysDev" class="grow"></select></label>
-      <div class="mut">Só use se o botão de áudio do sistema (alto-falante) falhar: escolha um dispositivo de gravação que capture o som do PC (ex.: "Mixagem estéreo" ou um cabo virtual). Em "Automático" o app tenta o loopback do Windows e, se falhar, procura a Mixagem estéreo.</div></fieldset>
-    <fieldset><legend>Discord</legend>
-      <label><input type="checkbox" id="dcPresence"> Mostrar a sala no meu perfil do Discord (convite por "Entrar")</label>
-      <div class="mut">Precisa do Discord aberto neste PC. Quem pode entrar direto é definido no Discord: Configurações → Privacidade de atividade → "Permitir que participantes do canal de voz entrem no meu jogo" (ligado) e "Permitir que amigos entrem no meu jogo" (desligado). Quem não puder entrar direto tem o pedido recusado.</div>
-      <div class="mut">Aviso em canal por webhook (opcional):</div>
-      <label><input type="checkbox" id="dcOn"> Avisar no Discord ao compartilhar</label>
-      <input id="dcUrl" type="password" placeholder="URL do webhook do canal">
-      <input id="joinPage" type="text" placeholder="URL da página-ponte https (convite clicável)">
-      <div class="mut">Canal → Editar → Integrações → Webhooks. Página-ponte: docs/join/ (veja o README).</div></fieldset>
-    <fieldset><legend>Rede</legend>
-      <label>Relay de signaling <input id="relayUrl" type="text" class="grow"></label>
-      <div class="mut">Só usado para as pessoas se encontrarem (tudo cifrado). O vídeo vai direto entre os PCs.</div>
-      <label class="col">Servidor TURN (opcional): para quando o P2P direto falha<textarea id="turnLines" rows="3" placeholder="turn:servidor:3478|usuário|senha"></textarea></label>
-      <label><input type="checkbox" id="turnShare" checked> Compartilhar com a sala (amigos também usam)</label>
-      <div class="mut">Um lado com relay já basta para destravar a conexão. Uma linha por servidor: url|usuário|senha. A mídia continua cifrada de ponta a ponta.</div></fieldset>
+<div id="settings" class="modal hidden"><div class="box settings">
+  <div class="set-head"><h2>Configurações</h2></div>
+  <div class="set-body">
+    <nav class="set-nav"><button id="tab-geral" class="set-tab active"><span class="ic i-settings"></span>Geral</button><button id="tab-av" class="set-tab"><span class="ic i-camera"></span>Áudio e vídeo</button><button id="tab-discord" class="set-tab"><span class="ic i-chat"></span>Discord</button><button id="tab-rede" class="set-tab"><span class="ic i-globe"></span>Rede</button></nav>
+    <div class="set-panels"><section id="panel-geral" class="set-panel"><div class="srow"><label class="slabel" for="myName">Seu nome</label><div class="sctl"><input id="myName" type="text" maxlength="40"></div></div><div class="srow"><label class="slabel" for="maxParticipants">Máximo de participantes<span class="help" tabindex="0" role="img" aria-label="Ajuda" data-tip="Quantas pessoas podem estar na sala ao mesmo tempo. Cada pessoa a mais recebe a sua transmissão separadamente e consome o seu upload.">?</span></label><div class="sctl"><input id="maxParticipants" type="number" min="2" max="12" class="w90"></div></div><label class="srow"><span class="slabel">Efeitos sonoros</span><span class="sctl"><input type="checkbox" class="sw" id="sfxOn"></span></label><div class="srow"><label class="slabel">Volume dos efeitos</label><div class="sctl"><input type="range" id="sfxVol" min="0" max="1" step="0.05" value="0.5"><button id="btnSfxTest" class="btn ghost">Testar</button></div></div><div class="set-sub">Início</div><label class="srow"><span class="slabel">Iniciar com o Windows</span><span class="sctl"><input type="checkbox" class="sw" id="autostart"></span></label><label class="srow"><span class="slabel">Iniciar minimizado<span class="help" tabindex="0" role="img" aria-label="Ajuda" data-tip="Só vale quando o app abre sozinho com o Windows: ele fica na bandeja, sem abrir a janela.">?</span></span><span class="sctl"><input type="checkbox" class="sw" id="minimized"></span></label></section><section id="panel-av" class="set-panel hidden"><div class="set-sub">Dispositivos</div><div class="srow"><label class="slabel" for="camDev">Câmera</label><div class="sctl"><select id="camDev"></select></div></div><div class="srow"><label class="slabel" for="micDev">Microfone</label><div class="sctl"><select id="micDev"></select></div></div><div class="srow"><label class="slabel">Ganho do microfone</label><div class="sctl"><input type="range" id="micGain" min="0" max="2" step="0.05" value="1"></div></div><div class="set-sub">Áudio da transmissão</div><label class="srow"><span class="slabel">Compartilhar o áudio do sistema junto com a tela<span class="help" tabindex="0" role="img" aria-label="Ajuda" data-tip="Ao compartilhar uma tela, o som do PC vai junto. Dá para ligar e desligar na hora pelo botão de alto-falante.">?</span></span><span class="sctl"><input type="checkbox" class="sw" id="sysAudio" checked></span></label><label class="srow"><span class="slabel">Áudio por aplicativo<span class="help" tabindex="0" role="img" aria-label="Ajuda" data-tip="Permite escolher quais aplicativos entram na transmissão (botão do mixer). Requer Windows 10 versão 2004 ou mais novo.">?</span></span><span class="sctl"><input type="checkbox" class="sw" id="appAudioOn" checked></span></label><div class="srow"><label class="slabel" for="sysDev">Dispositivo alternativo<span class="help" tabindex="0" role="img" aria-label="Ajuda" data-tip="Só use se o botão de áudio do sistema falhar: escolha um dispositivo de gravação que capture o som do PC (por exemplo &quot;Mixagem estéreo&quot; ou um cabo virtual). Em &quot;Automático&quot; o app tenta o loopback do Windows e, se falhar, procura a Mixagem estéreo.">?</span></label><div class="sctl"><select id="sysDev"></select></div></div></section><section id="panel-discord" class="set-panel hidden"><div class="set-sub">Perfil</div><label class="srow"><span class="slabel">Mostrar a sala no meu perfil do Discord<span class="help" tabindex="0" role="img" aria-label="Ajuda" data-tip="Seu perfil mostra a sala com um botão &quot;Entrar&quot;. Precisa do Discord aberto neste PC. Quem pode entrar direto é definido no Discord, em Configurações → Privacidade de atividade: deixe ligado &quot;Permitir que participantes do canal de voz entrem no meu jogo&quot; e desligado &quot;Permitir que amigos entrem no meu jogo&quot;. Quem não puder entrar direto tem o pedido recusado.">?</span></span><span class="sctl"><input type="checkbox" class="sw" id="dcPresence"></span></label><div class="set-sub">Aviso em um canal (webhook)</div><label class="srow"><span class="slabel">Publicar a sala no canal<span class="help" tabindex="0" role="img" aria-label="Ajuda" data-tip="Publica uma mensagem no canal com o convite e atualiza quem está compartilhando. Ela é apagada quando a sala esvazia.">?</span></span><span class="sctl"><input type="checkbox" class="sw" id="dcOn"></span></label><div class="srow"><label class="slabel" for="dcUrl">URL do webhook<span class="help" tabindex="0" role="img" aria-label="Ajuda" data-tip="No Discord: Canal → Editar → Integrações → Webhooks → Novo webhook → Copiar URL. Quem tem essa URL consegue postar no canal: não compartilhe.">?</span></label><div class="sctl"><input id="dcUrl" type="password" placeholder="https://discord.com/api/webhooks/…"></div></div><div class="srow"><label class="slabel" for="joinPage">Página de convite<span class="help" tabindex="0" role="img" aria-label="Ajuda" data-tip="Endereço https da página-ponte (veja o README, pasta docs/join). Com ela, o link no Discord vira clicável e abre o app.">?</span></label><div class="sctl"><input id="joinPage" type="text" placeholder="https://usuario.github.io/repositorio/"></div></div></section><section id="panel-rede" class="set-panel hidden"><div class="set-sub">Conexão</div><div class="srow"><label class="slabel" for="relayUrl">Relay de sinalização<span class="help" tabindex="0" role="img" aria-label="Ajuda" data-tip="Só serve para as pessoas se encontrarem, e tudo é cifrado. O vídeo vai direto entre os PCs.">?</span></label><div class="sctl"><input id="relayUrl" type="text"></div></div><div class="set-sub">Quando a conexão direta falha</div><div class="srow col"><label class="slabel" for="turnLines">Servidores TURN (opcional)<span class="help" tabindex="0" role="img" aria-label="Ajuda" data-tip="Um servidor de apoio para quando os PCs não conseguem se conectar direto. Uma linha por servidor: url|usuário|senha. Um lado com TURN já basta; a mídia continua cifrada de ponta a ponta.">?</span></label><div class="sctl"><textarea id="turnLines" rows="3" placeholder="turn:servidor:3478|usuário|senha"></textarea></div></div><label class="srow"><span class="slabel">Compartilhar o TURN com a sala<span class="help" tabindex="0" role="img" aria-label="Ajuda" data-tip="Seus amigos também usam o seu servidor TURN nas conexões com você.">?</span></span><span class="sctl"><input type="checkbox" class="sw" id="turnShare" checked></span></label></section></div>
   </div>
-  <div class="row"><button id="btnDiag" class="btn ghost">Executar diagnóstico</button><span class="grow"></span><button id="btnSave" class="btn">Salvar</button><button id="btnCloseSettings" class="btn ghost">Fechar</button></div>
-  <div id="settingsMsg" class="mut"></div>
-  <pre id="diag" class="mut"></pre>
+  <pre id="diag" class="set-diag mut"></pre>
+  <div class="set-foot"><button id="btnDiag" class="btn ghost">Executar diagnóstico</button><span id="settingsMsg" class="msg"></span><button id="btnSave" class="btn">Salvar</button><button id="btnCloseSettings" class="btn ghost">Fechar</button></div>
 </div></div>
 
+<div id="tip" class="tip hidden" role="tooltip"></div>
+
 <script src="shared/state.js"></script><script src="shared/quality.js"></script><script src="shared/codecs.js"></script><script src="shared/ice.js"></script><script src="shared/turn.js"></script><script src="shared/sfx.js"></script><script src="shared/zoom.js"></script>
-<script src="common.js"></script><script src="room.js"></script></body></html>
+<script src="common.js"></script><script src="app-feel.js"></script><script src="room.js"></script></body></html>

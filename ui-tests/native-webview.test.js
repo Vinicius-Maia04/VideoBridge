@@ -144,3 +144,32 @@ test('convite do Rich Presence para a sala em que já estou não reclama de "out
   t.handlers.onInvite('VB3.BBBBBBBBBBBBBBBBBBBBBB'); await t.tick(3);
   assert.match(t.$('#msg').textContent, /Saia da sala atual/);
 });
+
+// ---- jeito de aplicativo (sem menu de navegador, sem atalhos de navegador) ----
+function loadFeel() {
+  const l = {}, doc = { addEventListener(t, f) { (l[t] = l[t] || []).push(f); } };
+  const ctx = vm.createContext({ window: {}, document: doc });
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'ui', 'app-feel.js'), 'utf8'), ctx);
+  const fire = (type, e) => { let prevented = false; (l[type] || []).forEach((f) => f({ ...e, preventDefault() { prevented = true; } })); return prevented; };
+  return { fire };
+}
+const inField = { closest: (s) => (/input|textarea/.test(s) ? {} : null) }, onPage = { closest: () => null };
+test('botão direito: sem o menu de navegador na interface, mas com copiar/colar nos campos', () => {
+  const f = loadFeel();
+  assert.equal(f.fire('contextmenu', { target: onPage }), true);
+  assert.equal(f.fire('contextmenu', { target: inField }), false);
+});
+test('atalhos de navegador (recarregar, imprimir, salvar, código-fonte, DevTools, zoom) são bloqueados; copiar/colar não', () => {
+  const f = loadFeel();
+  for (const e of [{ key: 'F5' }, { key: 'F12' }, { key: 'r', ctrlKey: true }, { key: 'R', ctrlKey: true, shiftKey: true }, { key: 'p', ctrlKey: true }, { key: 's', ctrlKey: true }, { key: 'u', ctrlKey: true }, { key: 'I', ctrlKey: true, shiftKey: true }, { key: '+', ctrlKey: true }, { key: '-', ctrlKey: true }, { key: '0', ctrlKey: true }, { key: 'ArrowLeft', altKey: true }]) {
+    assert.equal(f.fire('keydown', e), true, JSON.stringify(e));
+  }
+  for (const e of [{ key: 'c', ctrlKey: true }, { key: 'v', ctrlKey: true }, { key: 'x', ctrlKey: true }, { key: 'a', ctrlKey: true }, { key: 'Enter' }, { key: 'Escape' }]) {
+    assert.equal(f.fire('keydown', e), false, JSON.stringify(e));
+  }
+});
+test('Ctrl + roda do mouse (zoom do navegador) e arrastar a interface são bloqueados', () => {
+  const f = loadFeel();
+  assert.equal(f.fire('wheel', { ctrlKey: true }), true); assert.equal(f.fire('wheel', { ctrlKey: false }), false);
+  assert.equal(f.fire('dragstart', { target: onPage }), true); assert.equal(f.fire('dragstart', { target: inField }), false);
+});
