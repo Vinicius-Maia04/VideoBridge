@@ -58,7 +58,8 @@ function uiToCfg() {
   c.systemAudio = $('#sysAudio').checked; c.systemAudioDevice = $('#sysDev').value;
   c.mic = { enabled: false, deviceId: $('#micDev').value, gain: Number($('#micGain').value) };
   c.webcam = { enabled: false, deviceId: $('#camDev').value };
-  c.discord = { announce: $('#dcOn').checked, webhookUrl: $('#dcUrl').value.trim(), joinPageUrl: $('#joinPage').value.trim(), presence: $('#dcPresence').checked };
+  c.hideShareNotice = $('#hideNotice').checked; c.appearance = { ...S.uiApp };
+  c.discord = { announce: $('#dcOn').checked, webhookUrl: $('#dcUrl').value.trim(), joinPageUrl: $('#joinPage').value.trim(), joinPageEnabled: $('#joinPageOn').checked, presence: $('#dcPresence').checked };
   c.signaling = { relay: $('#relayUrl').value.trim(), maxParticipants: Number($('#maxParticipants').value) || 6 };
   c.autostart = $('#autostart').checked; c.startMinimized = $('#minimized').checked;
   c.sfx = { enabled: $('#sfxOn').checked, volume: Number($('#sfxVol').value) };
@@ -75,7 +76,7 @@ function cfgToUi(c) {
   $('#codec').value = c.codec; $('#sysAudio').checked = c.systemAudio;
   S.preset = c.priority === 'detail' ? 'text' : c.priority === 'motion' ? 'video' : 'balanced'; markPreset();
   $('#micGain').value = c.mic.gain;
-  $('#dcPresence').checked = c.discord.presence !== false; $('#dcOn').checked = c.discord.announce; $('#dcUrl').value = c.discord.webhookUrl; $('#joinPage').value = c.discord.joinPageUrl || '';
+  $('#hideNotice').checked = c.hideShareNotice !== false; S.uiApp = { ...THEME_DEFAULT, ...(c.appearance || {}) }; renderThemeUi(); $('#dcPresence').checked = c.discord.presence !== false; $('#dcOn').checked = c.discord.announce; $('#dcUrl').value = c.discord.webhookUrl; $('#joinPage').value = c.discord.joinPageUrl || ''; $('#joinPageOn').checked = c.discord.joinPageEnabled !== false; syncJoinPageField();
   $('#relayUrl').value = (c.signaling && c.signaling.relay) || ''; $('#maxParticipants').value = (c.signaling && c.signaling.maxParticipants) || 6;
   $('#autostart').checked = c.autostart; $('#minimized').checked = c.startMinimized;
   $('#sfxOn').checked = !c.sfx || c.sfx.enabled !== false; $('#sfxVol').value = c.sfx ? c.sfx.volume : 0.5;
@@ -1020,7 +1021,46 @@ let settingsSnap = '';
 const settingsOpen = () => !$('#settings').classList.contains('hidden');
 /** "Foto" do formulário: se mudou desde que abriu, há alterações não salvas. */
 const snapSettings = () => { try { return JSON.stringify(uiToCfg()) + '|' + $('#turnLines').value; } catch { return ''; } };
-const SET_TABS = ['geral', 'av', 'discord', 'rede'];
+/** Sem a página de convite o endereço não vale: o campo fica desativado. */
+function syncJoinPageField() { $('#joinPage').disabled = !$('#joinPageOn').checked; }
+$('#joinPageOn').addEventListener('change', syncJoinPageField);
+// ---------- Aparência (temas) ----------
+const THEME_DEFAULT = window.VBTheme.DEFAULT;
+S.uiApp = { ...THEME_DEFAULT };
+const systemLight = () => !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches);
+/** Aplica o tema na página e avisa o processo principal (a barra de título da janela acompanha). */
+function applyAppearance(a) {
+  const root = document.documentElement;
+  if (!root || !root.setAttribute || !window.VBTheme) return;
+  vb.setTheme(window.VBTheme.apply(root, a, systemLight()));
+}
+const cssVar = (e, k, v) => { if (e.style && e.style.setProperty) e.style.setProperty(k, v); };
+function renderThemeUi() {
+  const T = window.VBTheme, box = $('#themeCards'); box.textContent = '';
+  T.THEMES.forEach((id) => {
+    const preset = T.PRESETS[id], label = preset ? preset.name : id === 'system' ? 'Sistema' : 'Personalizado';
+    const pv = el('span', { class: 'pv pv-' + id });
+    if (preset) { cssVar(pv, '--pv-bg', preset.bg); cssVar(pv, '--pv-acc', preset.acc); }
+    box.append(el('button', { class: 'theme-card' + (S.uiApp.theme === id ? ' sel' : ''), title: label, onclick: () => { S.uiApp.theme = id; renderThemeUi(); applyAppearance(S.uiApp); } }, pv, el('span', { class: 'nm', text: label })));
+  });
+  const sw = $('#accentSwatches'); sw.textContent = '';
+  T.ACCENTS.forEach((c) => {
+    const b = el('button', { class: 'swatch' + (S.uiApp.accent === c ? ' sel' : ''), title: c, onclick: () => { S.uiApp.accent = c; renderThemeUi(); applyAppearance(S.uiApp); } });
+    cssVar(b, '--c', c);
+    sw.append(b);
+  });
+  $('#thAccent').value = T.compute(S.uiApp, systemLight()).vars['--acc'];
+  $('#thBg').value = T.HEX.test(S.uiApp.customBg) ? S.uiApp.customBg : THEME_DEFAULT.customBg;
+  $('#rowCustomBg').classList.toggle('hidden', S.uiApp.theme !== 'custom');
+}
+$('#thAccent').addEventListener('input', () => { S.uiApp.accent = $('#thAccent').value; applyAppearance(S.uiApp); });
+$('#thBg').addEventListener('input', () => { S.uiApp.customBg = $('#thBg').value; applyAppearance(S.uiApp); });
+$('#thAccentReset').addEventListener('click', () => { S.uiApp.accent = ''; renderThemeUi(); applyAppearance(S.uiApp); });
+if (window.matchMedia) {
+  const mq = window.matchMedia('(prefers-color-scheme: light)');
+  if (mq && mq.addEventListener) mq.addEventListener('change', () => { const a = settingsOpen() ? S.uiApp : S.cfg.appearance; if (a && a.theme === 'system') applyAppearance(a); });
+}
+const SET_TABS = ['geral', 'aparencia', 'av', 'discord', 'rede'];
 function showSettingsTab(name) {
   SET_TABS.forEach((n) => { $(`#tab-${n}`).classList.toggle('active', n === name); $(`#panel-${n}`).classList.toggle('hidden', n !== name); });
 }
@@ -1061,7 +1101,7 @@ async function saveSettings() {
   try {
     const tv = V.parseTurnLines($('#turnLines').value); await saveCfg(); S.name = S.cfg.hostName || S.name; $('#lobbyName').value = S.cfg.hostName;
     $('#settingsMsg').textContent = tv.errors.length ? 'Salvo, mas ignorei linhas do TURN: ' + tv.errors.join(' ') : 'Configurações salvas.';
-    if (machine.state === 'IN_ROOM' && S.helloSent) sendHello(); renderUplink(); settingsSnap = snapSettings(); return true;
+    if (machine.state === 'IN_ROOM' && S.helloSent) sendHello(); renderUplink(); settingsSnap = snapSettings(); applyAppearance(S.cfg.appearance); return true;
   } catch (e) { $('#settingsMsg').textContent = 'Falha ao salvar: ' + e.message; return false; }
 }
 /** Fechar (botão, clique fora ou Esc): se houver alterações não salvas, pergunta antes. */
@@ -1073,6 +1113,7 @@ async function requestCloseSettings() {
     if (choice === 'save' && !(await saveSettings())) return; // não salvou: fica aberto mostrando o motivo
   }
   $('#settings').classList.add('hidden');
+  applyAppearance(S.cfg.appearance); // fechou sem salvar: volta ao tema salvo (a prévia some)
 }
 /** Clique no fundo escuro (só se o clique COMEÇOU e terminou nele: arrastar uma seleção de texto para fora não fecha). */
 function onBackdrop(el, fn) {
@@ -1238,7 +1279,7 @@ vb.onHotkey((name) => {
 window.addEventListener('beforeunload', () => { S.local.forEach(stopItem); S.peers.forEach((p) => { try { p.pc.close(); } catch { /* ok */ } }); });
 
 (async () => {
-  S.cfg = await vb.getConfig(); cfgToUi(S.cfg); S.name = S.cfg.hostName || '';
+  S.cfg = await vb.getConfig(); cfgToUi(S.cfg); applyAppearance(S.cfg.appearance); S.name = S.cfg.hostName || '';
   vb.version().then((v) => { if (v) $('#ver').textContent = 'v' + v; }).catch(() => {});
   render(); renderUplink();
   await refreshDevices().catch(() => {});

@@ -26,6 +26,8 @@ pub enum UserEvent {
     Fullscreen(bool),
     /// Há versão nova no GitHub: (tag, url do release).
     UpdateAvailable(String, String),
+    /// Tema da interface mudou: a barra de título da janela acompanha (true = claro).
+    Theme(bool),
     Menu(tray_icon::menu::MenuId),
     HotKey(u32),
 }
@@ -43,6 +45,7 @@ pub struct Shared {
     pub log: Arc<Logger>,
     pub proxy: EventLoopProxy<UserEvent>,
     pub live: AtomicBool,
+    infobar_running: AtomicBool,
     session: Mutex<Option<Session>>,
     discord: Mutex<Option<DiscordSession>>,
     /// Último aviso enviado (o vigia reaproveita título, convite e link).
@@ -87,6 +90,7 @@ impl Shared {
             dir,
             proxy,
             live: AtomicBool::new(false),
+            infobar_running: AtomicBool::new(false),
             session: Mutex::new(None),
             discord: Mutex::new(None),
             last_ann: Mutex::new(None),
@@ -207,7 +211,7 @@ impl Shared {
             }
         });
         let code = room::make_code(&secret, &relay_url).map_err(|e| e.to_string())?;
-        let jp = cfg.discord.join_page_url;
+        let jp = cfg.discord.join_page();
         self.log.info("Room opened", Some(json!({"relay": relay_url, "created": created})));
         Ok(json!({ "code": code, "joinUrl": if jp.is_empty() { String::new() } else { format!("{jp}#{code}") } }))
     }
@@ -218,10 +222,16 @@ impl Shared {
             "room:alone" => {
                 if let Some(s) = self.session.lock().expect("session").as_mut() { s.alone = args.first().and_then(Value::as_bool).unwrap_or(false); }
             }
+            "app:theme" => { let light = args.first().and_then(Value::as_str) == Some("light"); let _ = self.proxy.send_event(UserEvent::Theme(light)); }
             "stream:state" => {
                 let live = args.first().and_then(Value::as_str) == Some("STREAMING");
                 self.live.store(live, Ordering::SeqCst);
                 let _ = self.proxy.send_event(UserEvent::StreamState(live));
+                // enquanto há transmissão, esconde o aviso "está compartilhando sua tela" do Chromium (se o usuário não desligou)
+                if live && self.config().hide_share_notice && !self.infobar_running.swap(true, Ordering::SeqCst) {
+                    let me = self.clone();
+                    tokio::spawn(async move { crate::infobar::watch(me.clone()).await; me.infobar_running.store(false, Ordering::SeqCst); });
+                }
                 self.log.info("Share state", Some(json!({"state": if live {"STREAMING"} else {"IDLE"}})));
             }
             "log" => {

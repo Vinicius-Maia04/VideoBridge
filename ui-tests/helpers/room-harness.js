@@ -102,10 +102,11 @@ function boot({ vbOverrides = {}, cfg, media = {}, padSdp = 0, joinWaitMs = 6000
     close() { this.closed = true; this.signalingState = 'closed'; } async getStats() { return new Map(); }
   }
   let n = 0;
+  const rootEl = { attrs: {}, vars: {}, setAttribute(k, v) { this.attrs[k] = v; }, style: { setProperty(k, v) { rootEl.vars[k] = v; } } };
   const sandbox = {
     console, setTimeout: unref(setTimeout), clearTimeout, setInterval: unref(setInterval), clearInterval, performance: { now: () => Date.now() },
     Date: FakeDate, Promise, JSON, Math, Set, Map, Object, Number, String, Array, Error, Uint8Array, crypto: require('crypto').webcrypto,
-    document: { querySelector: $, createElement: (t) => new FakeEl(t), addEventListener(t, f) { (this.l = this.l || {})[t] = f; } },
+    document: { documentElement: rootEl, querySelector: $, createElement: (t) => new FakeEl(t), addEventListener(t, f) { (this.l = this.l || {})[t] = f; } },
     navigator: { hardwareConcurrency: 8, mediaDevices: {
       enumerateDevices: async () => media.devices || [], addEventListener() {},
       getDisplayMedia: async (c) => {
@@ -160,6 +161,6 @@ function boot({ vbOverrides = {}, cfg, media = {}, padSdp = 0, joinWaitMs = 6000
     await new Promise((r) => setTimeout(r, 25)); // as tentativas do áudio do sistema são espaçadas em tempo real (1 ms nos testes)
     await tick(6);
   }
-  return { $, calls, config, tick, handlers, pcs, gdm, sent, myId, msg, status, enter, shareFirstSource, makeStream, sounds, ctx, media, worklets, audioCtxs, clock };
+  return { root: rootEl, $, calls, config, tick, handlers, pcs, gdm, sent, myId, msg, status, enter, shareFirstSource, makeStream, sounds, ctx, media, worklets, audioCtxs, clock };
 }
 module.exports = { boot, FakeEl, makeStream, makeTrack };

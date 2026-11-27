@@ -11,7 +11,7 @@ use std::sync::Arc;
 use tao::dpi::LogicalSize;
 use tao::event::{Event, StartCause, WindowEvent};
 use tao::event_loop::{ControlFlow, EventLoopBuilder, EventLoopWindowTarget};
-use tao::window::{Fullscreen, Window, WindowBuilder};
+use tao::window::{Fullscreen, Theme, Window, WindowBuilder};
 use tray_icon::menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder, TrayIconEvent};
 use wry::{WebContext, WebView, WebViewBuilder};
@@ -288,6 +288,7 @@ pub fn run() {
                 UserEvent::Reply { id, ok, json } => ui.js(&format!("window.__vb&&window.__vb.resolve({id},{ok},{json});")),
                 UserEvent::StreamState(live) => ui.refresh_tray(live),
                 UserEvent::ReloadHotkeys => ui.register_hotkeys(&sh),
+                UserEvent::Theme(light) => { if let Some(w) = &ui.window { w.set_theme(Some(if light { Theme::Light } else { Theme::Dark })); } }
                 UserEvent::Fullscreen(on) => { if let Some(w) = &ui.window { w.set_fullscreen(on.then_some(Fullscreen::Borderless(None))); } }
                 UserEvent::PageLoaded => { ui.page_ready = true; ui.flush_invite(); ui.announce_update(); }
                 UserEvent::UpdateAvailable(tag, url) => { ui.update = Some((tag, url)); ui.refresh_tray(sh.live.load(std::sync::atomic::Ordering::SeqCst)); ui.announce_update(); }

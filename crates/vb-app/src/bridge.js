@@ -55,6 +55,7 @@
     setStreamState: (s) => send('stream:state', s),
     setAlone: (b) => send('room:alone', !!b),
     log: (level, msg, extra) => send('log', level, msg, extra),
+    setTheme: (mode) => send('app:theme', mode),
     version: () => invoke('app:version'),
     onHotkey: (fn) => on('hotkey', fn),
     onInvite: (fn) => on('room:invite', fn),

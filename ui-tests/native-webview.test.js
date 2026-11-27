@@ -173,3 +173,77 @@ test('Ctrl + roda do mouse (zoom do navegador) e arrastar a interface são bloqu
   assert.equal(f.fire('wheel', { ctrlKey: true }), true); assert.equal(f.fire('wheel', { ctrlKey: false }), false);
   assert.equal(f.fire('dragstart', { target: onPage }), true); assert.equal(f.fire('dragstart', { target: inField }), false);
 });
+
+// ---- página de convite padrão, com opção de trocar ou desligar ----
+test('página de convite: ligada por padrão (campo vazio = a padrão), pode ser trocada ou desligada', async () => {
+  const t = boot(); await t.enter(); t.$('#btnSettings').click(); await t.tick(8);
+  assert.equal(t.$('#joinPageOn').checked, true); assert.equal(t.$('#joinPage').disabled, false);
+  t.$('#joinPage').value = 'https://meu.site/convite/'; t.$('#btnSave').click(); await t.tick(8);
+  let d = t.calls.filter((c) => c[0] === 'setConfig').pop()[1].discord;
+  assert.equal(d.joinPageUrl, 'https://meu.site/convite/'); assert.equal(d.joinPageEnabled, true);
+  t.$('#joinPageOn').checked = false; t.$('#joinPageOn').fire('change', {}); await t.tick(2);
+  assert.equal(t.$('#joinPage').disabled, true, 'sem a página, o endereço fica desativado');
+  t.$('#btnSave').click(); await t.tick(8);
+  d = t.calls.filter((c) => c[0] === 'setConfig').pop()[1].discord;
+  assert.equal(d.joinPageEnabled, false);
+});
+
+test('"Esconder o aviso do navegador" faz parte da configuração salva (ligado por padrão)', async () => {
+  const t = boot(); await t.enter(); t.$('#btnSettings').click(); await t.tick(8);
+  assert.equal(t.$('#hideNotice').checked, true);
+  t.$('#hideNotice').checked = false; t.$('#btnSave').click(); await t.tick(8);
+  assert.equal(t.calls.filter((c) => c[0] === 'setConfig').pop()[1].hideShareNotice, false);
+});
+
+// ---- aparência (temas) ----
+const card = (t, title) => t.$('#themeCards').children.find((c) => c.title === title);
+const themeCalls = (t) => t.calls.filter((c) => c[0] === 'setTheme').map((c) => c[1]);
+const openSettings = async (t) => { t.$('#btnSettings').click(); await t.tick(8); };
+
+test('o tema salvo é aplicado ao abrir o app e a janela é avisada (barra de título)', async () => {
+  const cfg = boot().config; cfg.appearance = { theme: 'light', accent: '', customBg: '#0f1014' };
+  const t = boot({ cfg }); await t.tick(6);
+  assert.equal(t.root.attrs['data-theme'], 'light'); assert.equal(t.root.vars['--bg'], '#f3f5f8');
+  assert.equal(themeCalls(t).at(-1), 'light');
+});
+
+test('escolher um tema mostra na hora (prévia); fechar SEM salvar volta ao tema salvo', async () => {
+  const t = boot(); await t.enter(); await openSettings(t);
+  assert.equal(t.root.attrs['data-theme'], 'dark');
+  card(t, 'Claro').click(); await t.tick(3);
+  assert.equal(t.root.attrs['data-theme'], 'light', 'prévia ao vivo');
+  assert.ok(card(t, 'Claro').className.includes('sel'));
+  t.$('#btnCloseSettings').click(); await t.tick(4);          // há alteração: pergunta
+  t.$('#cfmDiscard').click(); await t.tick(6);
+  assert.equal(t.root.attrs['data-theme'], 'dark', 'descartou: tema salvo de volta');
+  assert.equal(themeCalls(t).at(-1), 'dark');
+});
+
+test('salvar grava o tema/destaque na configuração e mantém a aparência', async () => {
+  const t = boot(); await t.enter(); await openSettings(t);
+  card(t, 'Meia-noite').click(); await t.tick(3);
+  t.$('#accentSwatches').children[4].click(); await t.tick(3);   // âmbar
+  t.$('#btnSave').click(); await t.tick(8);
+  const a = t.calls.filter((c) => c[0] === 'setConfig').pop()[1].appearance;
+  assert.equal(a.theme, 'midnight'); assert.equal(a.accent, '#f59e0b');
+  assert.equal(t.root.vars['--acc'], '#f59e0b'); assert.equal(t.root.vars['--bg'], '#0b1220');
+});
+
+test('tema personalizado: o seletor de fundo aparece e as cores são recalculadas a partir dele', async () => {
+  const t = boot(); await t.enter(); await openSettings(t);
+  assert.ok(t.$('#rowCustomBg').classList.contains('hidden'), 'só aparece no personalizado');
+  card(t, 'Personalizado').click(); await t.tick(3);
+  assert.ok(!t.$('#rowCustomBg').classList.contains('hidden'));
+  t.$('#thBg').value = '#1a2b3c'; t.$('#thBg').fire('input', {}); await t.tick(2);
+  assert.equal(t.root.vars['--bg'], '#1a2b3c'); assert.notEqual(t.root.vars['--panel'], '#1a2b3c');
+  t.$('#thAccent').value = '#ec4899'; t.$('#thAccent').fire('input', {}); await t.tick(2);
+  assert.equal(t.root.vars['--acc'], '#ec4899');
+  t.$('#thAccentReset').click(); await t.tick(2);
+  assert.equal(t.root.vars['--acc'], '#10b981', '"Padrão do tema" volta ao destaque original');
+});
+
+test('"Sistema" segue o tema do Windows', async () => {
+  const t = boot(); await t.enter(); await openSettings(t);
+  card(t, 'Sistema').click(); await t.tick(3);
+  assert.equal(t.root.attrs['data-theme'], 'dark', 'sem preferência clara: escuro');
+});

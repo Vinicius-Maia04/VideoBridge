@@ -13,6 +13,8 @@ mod assets;
 #[cfg(windows)]
 mod bridge;
 #[cfg(windows)]
+mod infobar;
+#[cfg(windows)]
 mod platform;
 #[cfg(windows)]
 mod rich;

@@ -47,6 +47,8 @@ pub struct DiscordCfg {
     pub announce: bool,
     pub webhook_url: String,
     pub join_page_url: String,
+    /// Usar a página de convite (link clicável que abre o app). Ligado por padrão.
+    pub join_page_enabled: bool,
     /// Convite pelo perfil do Discord (Rich Presence). Não precisa de webhook.
     pub presence: bool,
 }
@@ -57,6 +59,18 @@ pub struct Hotkeys {
     pub toggle_camera: String,
     pub toggle_mic: String,
 }
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Appearance {
+    /// dark | light | midnight | graphite | system | custom
+    pub theme: String,
+    /// "" = cor de destaque do tema; ou `#rrggbb`.
+    pub accent: String,
+    /// Fundo do tema "custom" (`#rrggbb`).
+    pub custom_bg: String,
+}
+impl Default for Appearance { fn default() -> Self { Self { theme: "dark".into(), accent: String::new(), custom_bg: "#0f1014".into() } } }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
@@ -83,6 +97,9 @@ pub struct Config {
     pub hotkeys: Hotkeys,
     pub autostart: bool,
     pub start_minimized: bool,
+    /// Esconde o aviso do navegador ("está compartilhando sua tela") durante a transmissão.
+    pub hide_share_notice: bool,
+    pub appearance: Appearance,
 }
 
 impl Default for Mic { fn default() -> Self { Self { enabled: false, device_id: String::new(), gain: 1.0 } } }
@@ -90,7 +107,7 @@ impl Default for Webcam { fn default() -> Self { Self { enabled: false, device_i
 impl Default for Signaling { fn default() -> Self { Self { relay: crate::room::DEFAULT_RELAY.into(), max_participants: 6 } } }
 impl Default for Sfx { fn default() -> Self { Self { enabled: true, volume: 0.5 } } }
 impl Default for AppAudioCfg { fn default() -> Self { Self { enabled: true, allow_new: true, blocked: vec![], allowed: vec![] } } }
-impl Default for DiscordCfg { fn default() -> Self { Self { announce: false, webhook_url: String::new(), join_page_url: String::new(), presence: true } } }
+impl Default for DiscordCfg { fn default() -> Self { Self { announce: false, webhook_url: String::new(), join_page_url: String::new(), join_page_enabled: true, presence: true } } }
 impl Default for Hotkeys {
     fn default() -> Self {
         Self { toggle_stream: "Control+Shift+V".into(), toggle_camera: "Control+Shift+C".into(), toggle_mic: "Control+Shift+M".into() }
@@ -120,7 +137,24 @@ impl Default for Config {
             hotkeys: Hotkeys::default(),
             autostart: false,
             start_minimized: false,
+            hide_share_notice: true,
+            appearance: Appearance::default(),
         }
+    }
+}
+
+/// Página de convite padrão (GitHub Pages do projeto). Usada quando `joinPageUrl` está vazio.
+pub const DEFAULT_JOIN_PAGE: &str = "https://vinicius-maia04.github.io/VideoBridge/";
+
+impl DiscordCfg {
+    /// Página de convite efetiva: "" se desligada; o endereço configurado; ou o padrão. Sempre com `/` no fim quando é uma pasta.
+    pub fn join_page(&self) -> String {
+        if !self.join_page_enabled {
+            return String::new();
+        }
+        let url = if self.join_page_url.trim().is_empty() { DEFAULT_JOIN_PAGE } else { self.join_page_url.trim() };
+        let last = url.rsplit('/').next().unwrap_or("");
+        if url.ends_with('/') || last.contains('.') { url.to_string() } else { format!("{url}/") }
     }
 }
 
@@ -175,6 +209,11 @@ fn clamp(v: f64, lo: f64, hi: f64, def: f64) -> f64 {
     if v.is_finite() { v.clamp(lo, hi) } else { def }
 }
 
+/// `#rrggbb`.
+fn is_hex_color(s: &str) -> bool {
+    s.len() == 7 && s.starts_with('#') && s[1..].bytes().all(|c| c.is_ascii_hexdigit())
+}
+
 fn valid_stun(s: &str) -> bool {
     let Some(rest) = s.strip_prefix("stun:").or_else(|| s.strip_prefix("stuns:")) else { return false };
     let (host, port) = match rest.split_once(':') { Some((h, p)) => (h, Some(p)), None => (rest, None) };
@@ -214,6 +253,9 @@ pub fn sanitize(raw: &Value) -> Config {
     c.signaling.max_participants = c.signaling.max_participants.clamp(2, 12);
     let jp = c.discord.join_page_url.trim();
     c.discord.join_page_url = if jp.starts_with("https://") && jp.len() > 8 && !jp.contains(char::is_whitespace) && !jp.contains('#') { jp.to_string() } else { String::new() };
+    if !["dark", "light", "midnight", "graphite", "system", "custom"].contains(&c.appearance.theme.as_str()) { c.appearance.theme = d.appearance.theme.clone(); }
+    c.appearance.accent = if is_hex_color(&c.appearance.accent) { c.appearance.accent.to_lowercase() } else { String::new() };
+    c.appearance.custom_bg = if is_hex_color(&c.appearance.custom_bg) { c.appearance.custom_bg.to_lowercase() } else { d.appearance.custom_bg.clone() };
     c.stun.retain(|s| valid_stun(s));
     // configuração antiga (só 2 servidores do Google) passa a usar a lista nova
     if c.stun.len() == 2 && c.stun[0] == "stun:stun.l.google.com:19302" && c.stun[1] == "stun:stun1.l.google.com:19302" {
@@ -298,6 +340,28 @@ mod tests {
     }
 
     #[test]
+    fn appearance_is_validated() {
+        let c = sanitize(&json!({"appearance": {"theme": "light", "accent": "#EF4444", "customBg": "#102030"}})).appearance;
+        assert_eq!((c.theme.as_str(), c.accent.as_str(), c.custom_bg.as_str()), ("light", "#ef4444", "#102030"));
+        let bad = sanitize(&json!({"appearance": {"theme": "neon", "accent": "url(x)", "customBg": "#12"}})).appearance;
+        assert_eq!((bad.theme.as_str(), bad.accent.as_str(), bad.custom_bg.as_str()), ("dark", "", "#0f1014"), "inválidos voltam ao padrão");
+        assert_eq!(sanitize(&json!({})).appearance, Appearance::default());
+    }
+
+    #[test]
+    fn join_page_defaults_to_the_project_page_and_can_be_changed_or_disabled() {
+        let d = Config::default().discord;
+        assert_eq!(d.join_page(), DEFAULT_JOIN_PAGE, "vazio = padrão (vale também para configs antigas que já tinham \"\" salvo)");
+        let mut c = sanitize(&json!({"discord": {"joinPageUrl": "https://meu.site/convite"}})).discord;
+        assert_eq!(c.join_page(), "https://meu.site/convite/", "ganha a barra final");
+        c.join_page_url = "https://meu.site/join/index.html".into();
+        assert_eq!(c.join_page(), "https://meu.site/join/index.html", "arquivo não ganha barra");
+        c.join_page_enabled = false;
+        assert_eq!(c.join_page(), "", "desligada: só o código");
+        assert!(sanitize(&json!({"discord": {"joinPageUrl": "http://inseguro"}})).discord.join_page_url.is_empty(), "http é descartado (vira o padrão)");
+    }
+
+    #[test]
     fn old_two_server_stun_list_migrates() {
         let c = sanitize(&json!({"stun": ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"]}));
         assert_eq!(c.stun.len(), 4);
@@ -321,6 +385,9 @@ mod tests {
             assert!(v.get(k).is_some(), "falta {k}");
         }
         assert_eq!(v["discord"]["presence"], json!(true), "Rich Presence ligado por padrão");
+        assert_eq!(v["discord"]["joinPageEnabled"], json!(true));
+        assert_eq!(v["hideShareNotice"], json!(true));
+        assert_eq!(v["appearance"]["theme"], json!("dark"));
         assert_eq!(v["appAudio"]["allowNew"], json!(true));
         assert_eq!(v["hotkeys"]["toggleStream"], json!("Control+Shift+V"));
     }
